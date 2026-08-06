@@ -37,6 +37,7 @@ class MDParameters:
     compressibility: Optional[float] = None  # 1/bar (NPT), material-dependent, required for NPT (no default)
     seed: Optional[int] = None  # random seed for velocity initialization; None keeps non-deterministic behavior
     no_pbc: bool = False  # disable periodic boundary conditions
+    vol_tol: Optional[float] = 0.2  # allowed relative cell volume change in stability monitor; None disables the volume check
     custom_config: Dict[str, Any] = field(default_factory=dict)   # Custom configuration
     output_prefix: str = "md"
     ## for optimization
@@ -67,6 +68,7 @@ class MDStabilityMonitor:
 
     - temperature above ``max_temp`` (K)
     - cell volume outside ``(1 +- vol_tol) * V0`` where V0 is the initial volume
+      (skipped when ``vol_tol`` is None)
     - max per-atom force norm above ``max_force`` (eV/Angstrom)
     - NaN or inf in energy, forces, stress (if available) or positions
 
@@ -79,7 +81,7 @@ class MDStabilityMonitor:
         atoms: Atoms,
         fail_file: str = "md_failed.extxyz",
         max_temp: float = 5000.0,
-        vol_tol: float = 0.2,
+        vol_tol: Optional[float] = 0.2,
         max_force: float = 50.0,
     ):
         self.atoms = atoms
@@ -130,7 +132,7 @@ class MDStabilityMonitor:
         volume = self.atoms.get_volume()
         if not np.isfinite(volume) or self.v0 <= 0:
             reasons.append("invalid cell volume")
-        else:
+        elif self.vol_tol is not None:
             ratio = volume / self.v0
             if ratio > 1.0 + self.vol_tol or ratio < 1.0 - self.vol_tol:
                 reasons.append(
@@ -266,7 +268,7 @@ class MDRunner:
         traj = Trajectory(traj_file, 'w', atoms=self.atoms)
         dyn.attach(traj.write, interval=params.traj_freq)
         # stability watchdog: abort on blow-up / NaN instead of running on garbage
-        monitor = MDStabilityMonitor(self.atoms)
+        monitor = MDStabilityMonitor(self.atoms, vol_tol=params.vol_tol)
         dyn.attach(monitor.check, interval=1)
             # Run NPT
         self.logger.info("#### Starting MD...")
@@ -312,7 +314,7 @@ class MDRunner:
         traj = Trajectory(traj_file, 'w', atoms=self.atoms)
         dyn.attach(traj.write, interval=params.traj_freq)
         # stability watchdog: abort on blow-up / NaN instead of running on garbage
-        monitor = MDStabilityMonitor(self.atoms)
+        monitor = MDStabilityMonitor(self.atoms, vol_tol=params.vol_tol)
         dyn.attach(monitor.check, interval=1)
 
         # Run NVT

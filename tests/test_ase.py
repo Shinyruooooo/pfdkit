@@ -458,6 +458,25 @@ class TestMDStabilityMonitor(unittest.TestCase):
 
         np.testing.assert_array_equal(v1, v2)
 
+    def test_vol_tol_none_disables_volume_check(self):
+        """vol_tol=None disables the volume check; other checks still apply."""
+        from pfd.exploration.md.ase import MDStabilityMonitor
+        atoms = self.atoms.copy()
+        atoms.set_calculator(EMT())
+        monitor = MDStabilityMonitor(atoms, vol_tol=None)
+        # expand cell by 30% in volume: would fail with default vol_tol=0.2
+        atoms.set_cell(atoms.cell * (1.3 ** (1 / 3)), scale_atoms=True)
+        monitor.check()  # must not raise
+
+    def test_vol_tol_configurable(self):
+        """A relaxed vol_tol allows volume changes beyond the default 20%."""
+        from pfd.exploration.md.ase import MDStabilityMonitor
+        atoms = self.atoms.copy()
+        atoms.set_calculator(EMT())
+        monitor = MDStabilityMonitor(atoms, vol_tol=0.5)
+        atoms.set_cell(atoms.cell * (1.3 ** (1 / 3)), scale_atoms=True)
+        monitor.check()  # 30% < 50% tolerance: must not raise
+
 
 class TestIntegrationWithCalculatorWrapper(unittest.TestCase):
     """Test integration between MDRunner and CalculatorWrapper."""

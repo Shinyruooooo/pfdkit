@@ -146,7 +146,8 @@ The `exploration` section defines structural configuration exploration. In this 
                 "tau_t": 100,
                 "tau_p": 500,
                 "compressibility": 5e-6,
-                "seed": 12345
+                "seed": 12345,
+                "vol_tol": 0.2
             }
         ]
     ]
@@ -159,7 +160,8 @@ Notes on the MD parameters:
 - `compressibility`: compressibility in **1/bar**. It is material-dependent and **required for NPT** — there is no default; an NPT stage without it raises an error.
 - `seed`: optional random seed for velocity initialization. Set it for reproducible MD; omit it to keep non-deterministic behavior.
 - `no_pbc`: optional, set to `true` to disable periodic boundary conditions.
-- Stability watchdog: MD aborts with an error (dumping `md_failed.extxyz`) if temperature exceeds 5000 K, cell volume changes by more than ±20%, max force exceeds 50 eV/Å, or NaN/inf appears in energy/forces/stress/positions.
+- `vol_tol`: allowed relative cell volume change in the stability watchdog, defaults to `0.2` (±20%). Increase it (e.g. `0.5`) for simulations with large physical volume changes such as phase transitions, or set it to `null` to disable the volume check entirely.
+- Stability watchdog: MD aborts with an error (dumping `md_failed.extxyz`) if temperature exceeds 5000 K, cell volume changes by more than ±`vol_tol`, max force exceeds 50 eV/Å, or NaN/inf appears in energy/forces/stress/positions.
 
 The `select_confs` node filters unphysical configurations and compresses data using entropy-based measures:
 
