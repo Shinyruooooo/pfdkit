@@ -60,11 +60,26 @@ class MDParameters:
             return cls.from_json(f.read())
         
 
+class MDStabilityError(RuntimeError):
+    """MD terminated because the trajectory became physically unstable."""
+
+
+def _json_value(x):
+    """Convert a value to a JSON-safe native Python scalar; None if unavailable/non-finite."""
+    if x is None:
+        return None
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if np.isfinite(v) else None
+
+
 class MDStabilityMonitor:
     """Watchdog for MLIP-driven MD: aborts on blow-up instead of running on.
 
     Attached to the dynamics with ``dyn.attach(monitor.check, interval=1)``.
-    Raises ``RuntimeError`` when any of the following is detected:
+    Raises ``MDStabilityError`` when any of the following is detected:
 
     - temperature above ``max_temp`` (K)
     - cell volume outside ``(1 +- vol_tol) * V0`` where V0 is the initial volume
@@ -72,24 +87,31 @@ class MDStabilityMonitor:
     - max per-atom force norm above ``max_force`` (eV/Angstrom)
     - NaN or inf in energy, forces, stress (if available) or positions
 
-    On violation the current structure is written to ``fail_file`` for
-    later analysis before the exception is raised.
+    On violation the current structure is written to ``fail_file`` and a JSON
+    diagnostic summary to ``diag_file`` for later analysis before the
+    exception is raised. Failures while saving diagnostics never mask the
+    original ``MDStabilityError``.
     """
 
     def __init__(
         self,
         atoms: Atoms,
         fail_file: str = "md_failed.extxyz",
+        diag_file: str = "md_failed.json",
         max_temp: float = 5000.0,
         vol_tol: Optional[float] = 0.2,
         max_force: float = 50.0,
     ):
         self.atoms = atoms
         self.fail_file = fail_file
+        self.diag_file = diag_file
         self.max_temp = max_temp
         self.vol_tol = vol_tol
         self.max_force = max_force
         self.v0 = atoms.get_volume()
+        # number of MD steps completed; observers are also called once at the
+        # initial state (step 0), so the counter is incremented after each check
+        self.step = 0
 
     def check(self) -> None:
         reasons = []
@@ -98,6 +120,7 @@ class MDStabilityMonitor:
         if not np.isfinite(positions).all():
             reasons.append("NaN/inf in positions")
 
+        energy = None
         try:
             energy = self.atoms.get_potential_energy()
             if not np.isfinite(energy):
@@ -105,6 +128,7 @@ class MDStabilityMonitor:
         except Exception as e:
             reasons.append(f"energy evaluation failed: {e}")
 
+        fmax = None
         try:
             forces = self.atoms.get_forces()
             if not np.isfinite(forces).all():
@@ -130,24 +154,51 @@ class MDStabilityMonitor:
             reasons.append(f"temperature {temp:.1f} K exceeds limit {self.max_temp} K")
 
         volume = self.atoms.get_volume()
+        volume_ratio = None
         if not np.isfinite(volume) or self.v0 <= 0:
             reasons.append("invalid cell volume")
-        elif self.vol_tol is not None:
-            ratio = volume / self.v0
-            if ratio > 1.0 + self.vol_tol or ratio < 1.0 - self.vol_tol:
+        else:
+            volume_ratio = volume / self.v0
+            if self.vol_tol is not None and (
+                volume_ratio > 1.0 + self.vol_tol or volume_ratio < 1.0 - self.vol_tol
+            ):
                 reasons.append(
-                    f"cell volume changed by {(ratio - 1.0) * 100:.1f}% "
+                    f"cell volume changed by {(volume_ratio - 1.0) * 100:.1f}% "
                     f"(allowed +/-{self.vol_tol * 100:.0f}%)"
                 )
 
+        step = self.step
+        self.step += 1
         if reasons:
-            try:
-                write(self.fail_file, self.atoms, format="extxyz")
-            except Exception:
-                pass  # structure may be unwritable (e.g. NaN positions)
-            raise RuntimeError(
+            self._save_diagnostics(reasons, step, temp, energy, fmax, volume, volume_ratio)
+            raise MDStabilityError(
                 "MD stability check failed: " + "; ".join(reasons)
             )
+
+    def _save_diagnostics(self, reasons, step, temp, energy, fmax, volume, volume_ratio) -> None:
+        """Best-effort dump of the failed structure and a JSON summary.
+
+        Never raises: diagnostics must not mask the original MDStabilityError.
+        """
+        try:
+            write(self.fail_file, self.atoms, format="extxyz")
+        except Exception:
+            pass  # structure may be unwritable (e.g. NaN positions)
+        diag = {
+            "reason": "; ".join(reasons),
+            "step": int(step),
+            "temperature_K": _json_value(temp),
+            "energy_eV": _json_value(energy),
+            "fmax_eV_per_A": _json_value(fmax),
+            "volume_A3": _json_value(volume),
+            "initial_volume_A3": _json_value(self.v0),
+            "volume_ratio": _json_value(volume_ratio),
+        }
+        try:
+            with open(self.diag_file, "w") as f:
+                json.dump(diag, f, indent=2)
+        except Exception:
+            pass
 
 
 class MDRunner:
@@ -227,10 +278,14 @@ class MDRunner:
         return cls(atoms)
     
     def initialize_velocities(self, temperature: float, seed: Optional[int] = None) -> None:
-        """Initialize Maxwell-Boltzmann velocity distribution."""
-        if seed is not None:
-            np.random.seed(seed)
-        MaxwellBoltzmannDistribution(self.atoms, temperature_K=temperature)
+        """Initialize Maxwell-Boltzmann velocity distribution.
+
+        Uses a local random number generator when ``seed`` is given, so the
+        process-global ``np.random`` state is left untouched. ``seed=None``
+        keeps the non-deterministic default behavior.
+        """
+        rng = np.random.RandomState(seed) if seed is not None else None
+        MaxwellBoltzmannDistribution(self.atoms, temperature_K=temperature, rng=rng)
         self.logger.info(f"Initialized velocities at {temperature} K")
     
     def run_npt(self, 

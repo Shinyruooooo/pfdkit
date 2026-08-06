@@ -29,6 +29,7 @@ from dflow.python import (
     BigParameter,
     OPIOSign,
     TransientError,
+    FatalError,
 )
 
 from pfd.constants import (
@@ -46,6 +47,7 @@ from pfd.exploration import md
 from pfd.exploration.md import (
     MDRunner,
     CalculatorWrapper,
+    MDStabilityError,
 )
 
 from pfd.utils import (
@@ -84,6 +86,8 @@ class RunASE(OP):
                 "log": Artifact(Path),
                 "traj": Artifact(Path),
                 "optional_output": Artifact(Path, optional=True),
+                "md_failed": Artifact(Path, optional=True),
+                "md_diag": Artifact(Path, optional=True),
             }
         )
 
@@ -114,8 +118,11 @@ class RunASE(OP):
 
         Raises
         ------
+        FatalError
+            On deterministic failures: MD instability (MDStabilityError),
+            invalid configuration/parameters (ValueError etc.). Not retried.
         TransientError
-            On the failure of LAMMPS execution. Handle different failure cases? e.g. loss atoms.
+            On other failures that may recover after a retry.
         """
         config = ip["config"] if ip["config"] is not None else {}
         ## what the config should be like?
@@ -147,12 +154,31 @@ class RunASE(OP):
                 md_runner.run_md_from_json(
                     json_file=ase_input_name,
                 )
+            except MDStabilityError as e:
+                # physical instability is deterministic: retrying the same
+                # trajectory will blow up again, so fail without retry
+                raise FatalError(
+                    f"ASE MD terminated due to physical instability: {e}. "
+                    f"Diagnostics saved in task directory {work_dir.resolve()} "
+                    f"(md_failed.extxyz, md_failed.json)"
+                ) from e
+            except (ValueError, TypeError, KeyError) as e:
+                # configuration/parameter errors are deterministic as well
+                raise FatalError(
+                    f"ASE MD failed due to deterministic error: {e}"
+                ) from e
             except Exception as e:
                 raise TransientError(f"ASE MD/relax failed: {e}")
         ret_dict = {
             "log": work_dir / ase_log_name,
             "traj": work_dir / ase_traj_name
         }
+        # preserve stability diagnostics if present (e.g. left by a failed
+        # attempt before a transient retry succeeded)
+        for key, fname in (("md_failed", "md_failed.extxyz"), ("md_diag", "md_failed.json")):
+            fpath = work_dir / fname
+            if fpath.exists():
+                ret_dict[key] = fpath
         return OPIO(ret_dict)
 
     @staticmethod

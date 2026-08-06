@@ -182,3 +182,7 @@ node_modules/
 
 # tests
 .tests
+# ASE MD failure/runtime outputs
+md_failed.extxyz
+md_failed.json
+*.traj

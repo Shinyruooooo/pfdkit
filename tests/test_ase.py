@@ -413,37 +413,82 @@ class TestMDStabilityMonitor(unittest.TestCase):
         self.assertIn("compressibility", str(ctx.exception))
 
     def test_monitor_cell_expansion(self):
-        """Cell volume expansion beyond tolerance must raise RuntimeError and dump md_failed.extxyz."""
-        from pfd.exploration.md.ase import MDStabilityMonitor
-        import os
-        original_dir = Path.cwd()
-        try:
-            os.chdir(self.test_dir)
-            atoms = self.atoms.copy()
-            atoms.set_calculator(EMT())
-            monitor = MDStabilityMonitor(atoms)
-            # healthy state passes
+        """Cell volume expansion beyond tolerance raises MDStabilityError and dumps diagnostics."""
+        import json
+        from pfd.exploration.md.ase import MDStabilityMonitor, MDStabilityError
+        atoms = self.atoms.copy()
+        atoms.set_calculator(EMT())
+        fail_file = str(self.test_dir / "md_failed.extxyz")
+        diag_file = str(self.test_dir / "md_failed.json")
+        monitor = MDStabilityMonitor(atoms, fail_file=fail_file, diag_file=diag_file)
+        # healthy state passes
+        monitor.check()
+        # expand cell by 30% in volume (> 20% tolerance)
+        atoms.set_cell(atoms.cell * (1.3 ** (1 / 3)), scale_atoms=True)
+        with self.assertRaises(MDStabilityError) as ctx:
             monitor.check()
-            # expand cell by 30% in volume (> 20% tolerance)
-            atoms.set_cell(atoms.cell * (1.3 ** (1 / 3)), scale_atoms=True)
-            with self.assertRaises(RuntimeError) as ctx:
-                monitor.check()
-            self.assertIn("volume", str(ctx.exception))
-            self.assertTrue((self.test_dir / "md_failed.extxyz").exists())
-        finally:
-            os.chdir(original_dir)
+        self.assertIn("volume", str(ctx.exception))
+        self.assertTrue((self.test_dir / "md_failed.extxyz").exists())
+        self.assertTrue((self.test_dir / "md_failed.json").exists())
+        with open(diag_file) as f:
+            diag = json.load(f)
+        for key in ("reason", "step", "temperature_K", "energy_eV",
+                    "fmax_eV_per_A", "volume_A3", "initial_volume_A3",
+                    "volume_ratio"):
+            self.assertIn(key, diag)
+        self.assertIn("volume", diag["reason"])
+        self.assertEqual(diag["step"], 1)  # second check call
+        self.assertAlmostEqual(diag["volume_ratio"], 1.3, places=3)
+        self.assertIsInstance(diag["temperature_K"], float)
+        self.assertIsInstance(diag["energy_eV"], float)
 
     def test_monitor_nan_detection(self):
-        """NaN positions must trigger RuntimeError."""
+        """NaN positions trigger MDStabilityError; unwritable values become null in JSON."""
+        import json
+        from pfd.exploration.md.ase import MDStabilityMonitor, MDStabilityError
+        atoms = self.atoms.copy()
+        atoms.set_calculator(EMT())
+        fail_file = str(self.test_dir / "md_failed.extxyz")
+        diag_file = str(self.test_dir / "md_failed.json")
+        monitor = MDStabilityMonitor(atoms, fail_file=fail_file, diag_file=diag_file)
+        positions = atoms.get_positions()
+        positions[0, 0] = np.nan
+        atoms.set_positions(positions)
+        with self.assertRaises(MDStabilityError):
+            monitor.check()
+        with open(diag_file) as f:
+            diag = json.load(f)
+        self.assertIn("NaN", diag["reason"])
+        # energy/forces cannot be evaluated with NaN positions -> null
+        self.assertIsNone(diag["energy_eV"])
+        self.assertIsNone(diag["fmax_eV_per_A"])
+
+    def test_diagnostics_write_failure_does_not_mask_error(self):
+        """Unwritable diagnostic paths must not mask the MDStabilityError."""
+        from pfd.exploration.md.ase import MDStabilityMonitor, MDStabilityError
+        atoms = self.atoms.copy()
+        atoms.set_calculator(EMT())
+        monitor = MDStabilityMonitor(
+            atoms,
+            fail_file="/nonexistent_dir_xyz/md_failed.extxyz",
+            diag_file="/nonexistent_dir_xyz/md_failed.json",
+        )
+        positions = atoms.get_positions()
+        positions[0, 0] = np.nan
+        atoms.set_positions(positions)
+        with self.assertRaises(MDStabilityError):
+            monitor.check()
+
+    def test_monitor_step_counting(self):
+        """Monitor records the number of checks (MD steps) performed."""
         from pfd.exploration.md.ase import MDStabilityMonitor
         atoms = self.atoms.copy()
         atoms.set_calculator(EMT())
         monitor = MDStabilityMonitor(atoms)
-        positions = atoms.get_positions()
-        positions[0, 0] = np.nan
-        atoms.set_positions(positions)
-        with self.assertRaises(RuntimeError):
-            monitor.check()
+        self.assertEqual(monitor.step, 0)
+        monitor.check()
+        monitor.check()
+        self.assertEqual(monitor.step, 2)
 
     def test_velocity_seed_reproducibility(self):
         """Fixed seed gives identical initial velocities twice."""
@@ -457,6 +502,32 @@ class TestMDStabilityMonitor(unittest.TestCase):
         v2 = runner2.atoms.get_velocities().copy()
 
         np.testing.assert_array_equal(v1, v2)
+
+    def test_velocity_different_seeds_differ(self):
+        """Different seeds give different initial velocities."""
+        from pfd.exploration.md.ase import MDRunner
+        runner1 = MDRunner(self.atoms.copy())
+        runner1.initialize_velocities(300.0, seed=12345)
+        v1 = runner1.atoms.get_velocities().copy()
+
+        runner2 = MDRunner(self.atoms.copy())
+        runner2.initialize_velocities(300.0, seed=54321)
+        v2 = runner2.atoms.get_velocities().copy()
+
+        self.assertFalse(np.allclose(v1, v2))
+
+    def test_seed_does_not_touch_global_rng(self):
+        """Seeded velocity init must not change the global np.random state."""
+        from pfd.exploration.md.ase import MDRunner
+        np.random.seed(2026)
+        expected = np.random.random(5)
+
+        np.random.seed(2026)
+        runner = MDRunner(self.atoms.copy())
+        runner.initialize_velocities(300.0, seed=12345)
+        actual = np.random.random(5)
+
+        np.testing.assert_array_equal(actual, expected)
 
     def test_vol_tol_none_disables_volume_check(self):
         """vol_tol=None disables the volume check; other checks still apply."""

@@ -8,6 +8,7 @@ from ase.io import write, read
 from dflow.python import OPIO
 from pfd.op.select_confs import SelectConfs
 from pfd.exploration.selector import ConfSelector
+from pfd.utils import set_directory
 class DummyConfSelector(ConfSelector):
     def select(self, trajs, optional_outputs=None):  # match base signature loosely
         confs = []
@@ -34,6 +35,14 @@ class TestSelectConfs(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmpdir)
 
+    def _execute(self, op, ip):
+        # SelectConfs writes its "confs" output relative to the cwd;
+        # run it inside the tmp dir so the repository stays clean
+        with set_directory(Path(self.tmpdir)):
+            out = op.execute(ip)
+        out["confs"] = Path(self.tmpdir) / out["confs"]
+        return out
+
     def test_select_confs_basic(self):
         op = SelectConfs()
         ip = OPIO({
@@ -41,7 +50,7 @@ class TestSelectConfs(unittest.TestCase):
             "confs": [self.traj_path],
             "optional_parameters": {"max_sel": 3},
         })
-        out = op.execute(ip)
+        out = self._execute(op, ip)
         out_path = out["confs"]
         self.assertTrue(Path(out_path).exists())
         selected = list(read(out_path, index=":"))
@@ -74,7 +83,7 @@ class TestSelectConfs(unittest.TestCase):
             "init_confs": [init_path1, init_path2],
             "optional_parameters": {"max_sel": 4, "h_filter": {"chunk_size":1, "k":2, "cutoff":2.0, "batch_size":2, "h":0.01}},
         })
-        out = op.execute(ip)
+        out = self._execute(op, ip)
         out_path = out["confs"]
         self.assertTrue(Path(out_path).exists())
         selected = list(read(out_path, index=":"))
@@ -90,7 +99,7 @@ class TestSelectConfs(unittest.TestCase):
             "iter_confs": iter_path,
             "optional_parameters": {"max_sel": 5, "h_filter": {"chunk_size":1, "k":2, "cutoff":2.0, "batch_size":2, "h":0.01}},
         })
-        out = op.execute(ip)
+        out = self._execute(op, ip)
         out_path = out["confs"]
         self.assertTrue(Path(out_path).exists())
         selected = list(read(out_path, index=":"))
@@ -108,7 +117,7 @@ class TestSelectConfs(unittest.TestCase):
             "iter_confs": iter_path,
             "optional_parameters": {"max_sel": 5, "h_filter": {"chunk_size":1, "k":2, "cutoff":2.0, "batch_size":2, "h":0.01}},
         })
-        out = op.execute(ip)
+        out = self._execute(op, ip)
         out_path = out["confs"]
         self.assertTrue(Path(out_path).exists())
         selected = list(read(out_path, index=":"))
@@ -144,7 +153,7 @@ class TestSelectConfs(unittest.TestCase):
             "confs": [subdir1, subdir2],  # Pass directories instead of files
             "optional_parameters": {"max_sel": 8},
         })
-        out = op.execute(ip)
+        out = self._execute(op, ip)
         out_path = out["confs"]
         self.assertTrue(Path(out_path).exists())
         selected = list(read(out_path, index=":"))
@@ -173,7 +182,7 @@ class TestSelectConfs(unittest.TestCase):
             "confs": [self.traj_path, subdir],  # Mix of file and directory
             "optional_parameters": {"max_sel": 10},
         })
-        out = op.execute(ip)
+        out = self._execute(op, ip)
         out_path = out["confs"]
         self.assertTrue(Path(out_path).exists())
         selected = list(read(out_path, index=":"))
