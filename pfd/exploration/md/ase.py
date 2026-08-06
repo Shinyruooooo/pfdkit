@@ -8,7 +8,7 @@ from dataclasses import dataclass, asdict, field
 import ase
 import numpy as np
 from ase import Atoms, units
-from ase.io import read
+from ase.io import read, write
 from ase.io.trajectory import Trajectory
 from ase.md.langevin import Langevin
 from ase.md.nose_hoover_chain import NoseHooverChainNVT
@@ -32,9 +32,11 @@ class MDParameters:
     nsteps: int = 30000  # NVT production steps
     traj_freq: int = 100  # frames
     log_freq: int = 100  # steps
-    tau_t: float = 100.0  # damping factor * timestep
-    tau_p: float = 1000  # damping factor for pressure (NPT)
-    compressibility: float = 4.5e-5  # 1/bar (NPT)
+    tau_t: float = 100.0  # temperature coupling time in fs
+    tau_p: float = 1000  # pressure coupling time in fs (NPT)
+    compressibility: Optional[float] = None  # 1/bar (NPT), material-dependent, required for NPT (no default)
+    seed: Optional[int] = None  # random seed for velocity initialization; None keeps non-deterministic behavior
+    no_pbc: bool = False  # disable periodic boundary conditions
     custom_config: Dict[str, Any] = field(default_factory=dict)   # Custom configuration
     output_prefix: str = "md"
     ## for optimization
@@ -56,6 +58,89 @@ class MDParameters:
         with open(filename, 'r') as f:
             return cls.from_json(f.read())
         
+
+class MDStabilityMonitor:
+    """Watchdog for MLIP-driven MD: aborts on blow-up instead of running on.
+
+    Attached to the dynamics with ``dyn.attach(monitor.check, interval=1)``.
+    Raises ``RuntimeError`` when any of the following is detected:
+
+    - temperature above ``max_temp`` (K)
+    - cell volume outside ``(1 +- vol_tol) * V0`` where V0 is the initial volume
+    - max per-atom force norm above ``max_force`` (eV/Angstrom)
+    - NaN or inf in energy, forces, stress (if available) or positions
+
+    On violation the current structure is written to ``fail_file`` for
+    later analysis before the exception is raised.
+    """
+
+    def __init__(
+        self,
+        atoms: Atoms,
+        fail_file: str = "md_failed.extxyz",
+        max_temp: float = 5000.0,
+        vol_tol: float = 0.2,
+        max_force: float = 50.0,
+    ):
+        self.atoms = atoms
+        self.fail_file = fail_file
+        self.max_temp = max_temp
+        self.vol_tol = vol_tol
+        self.max_force = max_force
+        self.v0 = atoms.get_volume()
+
+    def check(self) -> None:
+        reasons = []
+
+        positions = self.atoms.get_positions()
+        if not np.isfinite(positions).all():
+            reasons.append("NaN/inf in positions")
+
+        energy = self.atoms.get_potential_energy()
+        if not np.isfinite(energy):
+            reasons.append("NaN/inf in energy")
+
+        forces = self.atoms.get_forces()
+        if not np.isfinite(forces).all():
+            reasons.append("NaN/inf in forces")
+        else:
+            fmax = np.linalg.norm(forces, axis=1).max()
+            if fmax > self.max_force:
+                reasons.append(
+                    f"max force {fmax:.2f} eV/Ang exceeds limit {self.max_force} eV/Ang"
+                )
+
+        try:
+            stress = self.atoms.get_stress()
+            if not np.isfinite(stress).all():
+                reasons.append("NaN/inf in stress")
+        except Exception:
+            pass  # calculator does not provide stress; skip
+
+        temp = self.atoms.get_temperature()
+        if not np.isfinite(temp) or temp > self.max_temp:
+            reasons.append(f"temperature {temp:.1f} K exceeds limit {self.max_temp} K")
+
+        volume = self.atoms.get_volume()
+        if not np.isfinite(volume) or self.v0 <= 0:
+            reasons.append("invalid cell volume")
+        else:
+            ratio = volume / self.v0
+            if ratio > 1.0 + self.vol_tol or ratio < 1.0 - self.vol_tol:
+                reasons.append(
+                    f"cell volume changed by {(ratio - 1.0) * 100:.1f}% "
+                    f"(allowed +/-{self.vol_tol * 100:.0f}%)"
+                )
+
+        if reasons:
+            try:
+                write(self.fail_file, self.atoms, format="extxyz")
+            except Exception:
+                pass  # structure may be unwritable (e.g. NaN positions)
+            raise RuntimeError(
+                "MD stability check failed: " + "; ".join(reasons)
+            )
+
 
 class MDRunner:
     """
