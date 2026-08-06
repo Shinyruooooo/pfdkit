@@ -96,19 +96,25 @@ class MDStabilityMonitor:
         if not np.isfinite(positions).all():
             reasons.append("NaN/inf in positions")
 
-        energy = self.atoms.get_potential_energy()
-        if not np.isfinite(energy):
-            reasons.append("NaN/inf in energy")
+        try:
+            energy = self.atoms.get_potential_energy()
+            if not np.isfinite(energy):
+                reasons.append("NaN/inf in energy")
+        except Exception as e:
+            reasons.append(f"energy evaluation failed: {e}")
 
-        forces = self.atoms.get_forces()
-        if not np.isfinite(forces).all():
-            reasons.append("NaN/inf in forces")
-        else:
-            fmax = np.linalg.norm(forces, axis=1).max()
-            if fmax > self.max_force:
-                reasons.append(
-                    f"max force {fmax:.2f} eV/Ang exceeds limit {self.max_force} eV/Ang"
-                )
+        try:
+            forces = self.atoms.get_forces()
+            if not np.isfinite(forces).all():
+                reasons.append("NaN/inf in forces")
+            else:
+                fmax = np.linalg.norm(forces, axis=1).max()
+                if fmax > self.max_force:
+                    reasons.append(
+                        f"max force {fmax:.2f} eV/Ang exceeds limit {self.max_force} eV/Ang"
+                    )
+        except Exception as e:
+            reasons.append(f"force evaluation failed: {e}")
 
         try:
             stress = self.atoms.get_stress()
@@ -234,10 +240,15 @@ class MDRunner:
 
         if params.press is None:
             raise ValueError("Pressure must be specified for NPT simulation")
+        if params.compressibility is None:
+            raise ValueError(
+                "NPT ensemble requires compressibility (1/bar). "
+                "Please provide material-dependent value."
+            )
         timestep = params.dt * units.fs
         
         # Initialize velocities
-        self.initialize_velocities(params.temp)
+        self.initialize_velocities(params.temp, seed=params.seed)
         
         # Setup NPT dynamics
         dyn = NPTBerendsen(
@@ -254,6 +265,9 @@ class MDRunner:
         )
         traj = Trajectory(traj_file, 'w', atoms=self.atoms)
         dyn.attach(traj.write, interval=params.traj_freq)
+        # stability watchdog: abort on blow-up / NaN instead of running on garbage
+        monitor = MDStabilityMonitor(self.atoms)
+        dyn.attach(monitor.check, interval=1)
             # Run NPT
         self.logger.info("#### Starting MD...")
         start_time = time.time()
@@ -278,11 +292,11 @@ class MDRunner:
         ) -> None:
         """Run NVT simulation."""
         timestep = params.dt * units.fs
-        tdamp = params.tau_t * timestep
+        tdamp = params.tau_t * units.fs  # temperature coupling time in fs, same convention as NPT
         
         # Initialize velocities if not already done
         if not hasattr(self, '_velocities_initialized'):
-            self.initialize_velocities(params.temp)
+            self.initialize_velocities(params.temp, seed=params.seed)
             self._velocities_initialized = True
         
         # Setup NVT dynamics
@@ -297,6 +311,9 @@ class MDRunner:
         )
         traj = Trajectory(traj_file, 'w', atoms=self.atoms)
         dyn.attach(traj.write, interval=params.traj_freq)
+        # stability watchdog: abort on blow-up / NaN instead of running on garbage
+        monitor = MDStabilityMonitor(self.atoms)
+        dyn.attach(monitor.check, interval=1)
 
         # Run NVT
         self.logger.info("#### Starting NVT simulation...")
@@ -316,6 +333,9 @@ class MDRunner:
         """Run MD simulation based on ensemble parameter."""
         if not hasattr(self.atoms, 'calc') or self.atoms.calc is None:
             raise ValueError("Calculator must be set before running MD")
+        
+        if params.no_pbc:
+            self.atoms.set_pbc(False)
             
         self.logger.info(f"Starting MD simulation with {len(self.atoms)} atoms")
         self.logger.info(f"Ensemble: {params.ensemble.upper()}")

@@ -56,25 +56,31 @@ class AseTaskGroup(ConfSamplingTaskGroup):
         temps: List[float],  # temperature
         press: Optional[List[float]] = None,
         ens: str = "npt",
-        dt: float = 2,  # time step
+        dt: float = 2,  # time step in fs
         nsteps: int = 1000,
         trj_freq: int = 100,
-        tau_t: float = 100,
-        tau_p: float = 500,
+        tau_t: float = 100,  # temperature coupling time in fs
+        tau_p: float = 500,  # pressure coupling time in fs
+        compressibility: Optional[float] = None,  # 1/bar, required for NPT
+        seed: Optional[int] = None,  # velocity initialization seed
         no_pbc: bool = False,
     ):
         """_summary_
 
         Args:
-            temps (List[float]): _description_
-            ens (str, optional): _description_. Defaults to "npt".
-            dt (float, optional): _description_. Defaults to 0.001.
-            trj_freq (int, optional): _description_. Defaults to 10.
-            tau_t (float, optional): _description_. Defaults to 0.1.
-            tau_p (float, optional): _description_. Defaults to 0.5.
-            pka_e (Optional[float], optional): _description_. Defaults to None.
-            neidelay (Optional[int], optional): _description_. Defaults to None.
-            no_pbc (bool, optional): _description_. Defaults to False.
+            temps (List[float]): List of temperatures in K.
+            press (Optional[List[float]]): List of pressures in bar, None for NVT.
+            ens (str, optional): Ensemble, "npt" or "nvt". Defaults to "npt".
+            dt (float, optional): MD time step in fs. Defaults to 2.
+            nsteps (int, optional): Number of MD steps. Defaults to 1000.
+            trj_freq (int, optional): Trajectory/log output interval in steps. Defaults to 100.
+            tau_t (float, optional): Temperature coupling time in fs. Defaults to 100.
+            tau_p (float, optional): Pressure coupling time in fs. Defaults to 500.
+            compressibility (Optional[float], optional): Compressibility in 1/bar
+                (material-dependent, required for NPT). Defaults to None.
+            seed (Optional[int], optional): Random seed for velocity initialization;
+                None keeps non-deterministic behavior. Defaults to None.
+            no_pbc (bool, optional): Disable periodic boundary conditions. Defaults to False.
         """
         self.temps = temps
         self.press = press if press is not None else [None]
@@ -84,6 +90,8 @@ class AseTaskGroup(ConfSamplingTaskGroup):
         self.trj_freq = trj_freq
         self.tau_t = tau_t
         self.tau_p = tau_p
+        self.compressibility = compressibility
+        self.seed = seed
         self.no_pbc = no_pbc
         self.md_set = True
 
@@ -138,6 +146,9 @@ class AseTaskGroup(ConfSamplingTaskGroup):
             log_freq=self.trj_freq,
             tau_t=self.tau_t,
             tau_p=self.tau_p,
+            compressibility=self.compressibility,
+            seed=self.seed,
+            no_pbc=self.no_pbc,
         )
         task.add_file(ase_input_name, ase_input.to_json())
         return task
@@ -178,11 +189,13 @@ class AseTaskGroup(ConfSamplingTaskGroup):
         doc_temps = "List of temperatures for MD simulation."
         doc_press = "List of pressures for MD simulation (optional)."
         doc_ens = "Ensemble type (e.g., 'npt', 'nvt')."
-        doc_dt = "MD time step (fs or ps)."
+        doc_dt = "MD time step in fs."
         doc_nsteps = "Number of MD steps."
         doc_trj_freq = "Trajectory output frequency."
-        doc_tau_t = "Thermostat time constant."
-        doc_tau_p = "Barostat time constant."
+        doc_tau_t = "Temperature coupling time in fs."
+        doc_tau_p = "Pressure coupling time in fs."
+        doc_compressibility = "Compressibility in 1/bar (material-dependent, required for NPT)."
+        doc_seed = "Random seed for velocity initialization (optional; unset keeps non-deterministic behavior)."
         doc_no_pbc = "Disable periodic boundary conditions."
 
         return [
@@ -194,6 +207,8 @@ class AseTaskGroup(ConfSamplingTaskGroup):
             Argument("trj_freq", int, optional=True, default=100, doc=doc_trj_freq),
             Argument("tau_t", float, optional=True, default=100, doc=doc_tau_t),
             Argument("tau_p", float, optional=True, default=500, doc=doc_tau_p),
+            Argument("compressibility", float, optional=True, default=None, doc=doc_compressibility),
+            Argument("seed", int, optional=True, default=None, doc=doc_seed),
             Argument("no_pbc", bool, optional=True, default=False, doc=doc_no_pbc),
         ]
 

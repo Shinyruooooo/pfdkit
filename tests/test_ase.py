@@ -231,7 +231,8 @@ class TestMDRunner(unittest.TestCase):
             nsteps=10,
             traj_freq=5,
             log_freq=5,
-            ensemble="npt"
+            ensemble="npt",
+            compressibility=4.5e-5,  # 1/bar, required for NPT
         )
         
         # Run simulation
@@ -384,6 +385,78 @@ class TestMDRunner(unittest.TestCase):
         bad_params = MDParameters(ensemble="unknown")
         with self.assertRaises(ValueError):
             md_runner.run_md(bad_params)
+
+
+class TestMDStabilityMonitor(unittest.TestCase):
+    """Test NPT compressibility requirement, stability monitor, and velocity seed."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.test_dir = Path(self.tmpdir)
+        self.atoms = bulk('Cu', 'fcc', a=3.6, cubic=True) * (2, 2, 2)
+        self.atoms.set_calculator(EMT())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir)
+
+    def test_npt_requires_compressibility(self):
+        """NPT without compressibility must raise ValueError."""
+        from pfd.exploration.md.ase import MDRunner
+        md_runner = MDRunner(self.atoms.copy())
+        md_runner.set_calculator(EMT())
+        params = MDParameters(
+            temp=300.0, press=1.0, dt=1.0, nsteps=5, ensemble="npt",
+            compressibility=None,
+        )
+        with self.assertRaises(ValueError) as ctx:
+            md_runner.run_npt(params)
+        self.assertIn("compressibility", str(ctx.exception))
+
+    def test_monitor_cell_expansion(self):
+        """Cell volume expansion beyond tolerance must raise RuntimeError and dump md_failed.extxyz."""
+        from pfd.exploration.md.ase import MDStabilityMonitor
+        import os
+        original_dir = Path.cwd()
+        try:
+            os.chdir(self.test_dir)
+            atoms = self.atoms.copy()
+            atoms.set_calculator(EMT())
+            monitor = MDStabilityMonitor(atoms)
+            # healthy state passes
+            monitor.check()
+            # expand cell by 30% in volume (> 20% tolerance)
+            atoms.set_cell(atoms.cell * (1.3 ** (1 / 3)), scale_atoms=True)
+            with self.assertRaises(RuntimeError) as ctx:
+                monitor.check()
+            self.assertIn("volume", str(ctx.exception))
+            self.assertTrue((self.test_dir / "md_failed.extxyz").exists())
+        finally:
+            os.chdir(original_dir)
+
+    def test_monitor_nan_detection(self):
+        """NaN positions must trigger RuntimeError."""
+        from pfd.exploration.md.ase import MDStabilityMonitor
+        atoms = self.atoms.copy()
+        atoms.set_calculator(EMT())
+        monitor = MDStabilityMonitor(atoms)
+        positions = atoms.get_positions()
+        positions[0, 0] = np.nan
+        atoms.set_positions(positions)
+        with self.assertRaises(RuntimeError):
+            monitor.check()
+
+    def test_velocity_seed_reproducibility(self):
+        """Fixed seed gives identical initial velocities twice."""
+        from pfd.exploration.md.ase import MDRunner
+        runner1 = MDRunner(self.atoms.copy())
+        runner1.initialize_velocities(300.0, seed=12345)
+        v1 = runner1.atoms.get_velocities().copy()
+
+        runner2 = MDRunner(self.atoms.copy())
+        runner2.initialize_velocities(300.0, seed=12345)
+        v2 = runner2.atoms.get_velocities().copy()
+
+        np.testing.assert_array_equal(v1, v2)
 
 
 class TestIntegrationWithCalculatorWrapper(unittest.TestCase):
