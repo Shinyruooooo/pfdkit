@@ -175,6 +175,8 @@ def _prep_run_expl(
                     "log",
                     "traj",
                     "optional_output",
+                    "md_failed",
+                    "md_diag",
                 ],
                 **template_slice_config,
             ),

@@ -65,6 +65,7 @@ class AseTaskGroup(ConfSamplingTaskGroup):
         seed: Optional[int] = None,  # velocity initialization seed
         no_pbc: bool = False,
         vol_tol: Optional[float] = 0.2,  # allowed relative cell volume change in stability monitor; None disables the volume check
+        max_force: Optional[float] = 50.0,  # max per-atom force threshold in eV/Angstrom in stability monitor; None disables the force check
     ):
         """_summary_
 
@@ -84,6 +85,9 @@ class AseTaskGroup(ConfSamplingTaskGroup):
             no_pbc (bool, optional): Disable periodic boundary conditions. Defaults to False.
             vol_tol (Optional[float], optional): Allowed relative cell volume change in the
                 MD stability monitor; None disables the volume check. Defaults to 0.2.
+            max_force (Optional[float], optional): Max per-atom force threshold in
+                eV/Angstrom in the MD stability monitor; None disables the force check.
+                Defaults to 50.0.
         """
         self.temps = temps
         self.press = press if press is not None else [None]
@@ -97,6 +101,7 @@ class AseTaskGroup(ConfSamplingTaskGroup):
         self.seed = seed
         self.no_pbc = no_pbc
         self.vol_tol = vol_tol
+        self.max_force = max_force
         self.md_set = True
 
     def make_task(self) -> "AseTaskGroup":
@@ -154,6 +159,7 @@ class AseTaskGroup(ConfSamplingTaskGroup):
             seed=self.seed,
             no_pbc=self.no_pbc,
             vol_tol=self.vol_tol,
+            max_force=self.max_force,
         )
         task.add_file(ase_input_name, ase_input.to_json())
         return task
@@ -203,6 +209,7 @@ class AseTaskGroup(ConfSamplingTaskGroup):
         doc_seed = "Random seed for velocity initialization (optional; unset keeps non-deterministic behavior)."
         doc_no_pbc = "Disable periodic boundary conditions."
         doc_vol_tol = "Allowed relative cell volume change in the MD stability monitor (set null to disable the volume check)."
+        doc_max_force = "Max per-atom force threshold in eV/Angstrom in the MD stability monitor (set null to disable the force check)."
 
         return [
             Argument("temps", list, optional=False, doc=doc_temps),
@@ -217,6 +224,7 @@ class AseTaskGroup(ConfSamplingTaskGroup):
             Argument("seed", int, optional=True, default=None, doc=doc_seed),
             Argument("no_pbc", bool, optional=True, default=False, doc=doc_no_pbc),
             Argument("vol_tol", float, optional=True, default=0.2, doc=doc_vol_tol),
+            Argument("max_force", float, optional=True, default=50.0, doc=doc_max_force),
         ]
 
     @classmethod

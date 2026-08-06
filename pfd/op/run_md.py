@@ -119,10 +119,19 @@ class RunASE(OP):
         Raises
         ------
         FatalError
-            On deterministic failures: MD instability (MDStabilityError),
-            invalid configuration/parameters (ValueError etc.). Not retried.
+            On deterministic failures: invalid configuration/parameters
+            (ValueError etc.). Not retried.
         TransientError
             On other failures that may recover after a retry.
+
+        Notes
+        -----
+        ``MDStabilityError`` (the stability monitor stopped the trajectory)
+        is NOT an error here: the exploration entered an unreliable region
+        of the model, so the task returns normally with the partial
+        trajectory, the log and the failure diagnostics (controlled early
+        stop). The remote script exits 0, so neither dpdispatcher nor
+        dflow/argo will retry the task.
         """
         config = ip["config"] if ip["config"] is not None else {}
         ## what the config should be like?
@@ -136,6 +145,12 @@ class RunASE(OP):
         work_dir = Path(task_name)
 
         with set_directory(work_dir):
+            # remove stale stability diagnostics from a previous attempt so
+            # they are not mistaken for this run's output
+            for fname in ("md_failed.extxyz", "md_failed.json"):
+                stale = Path(fname)
+                if stale.is_file():
+                    stale.unlink()
             # link input files
             for ii in input_files:
                 iname = ii.name
@@ -155,15 +170,15 @@ class RunASE(OP):
                     json_file=ase_input_name,
                 )
             except MDStabilityError as e:
-                # physical instability is deterministic: retrying the same
-                # trajectory will blow up again, so fail without retry
-                raise FatalError(
-                    f"ASE MD terminated due to physical instability: {e}. "
-                    f"Diagnostics saved in task directory {work_dir.resolve()} "
-                    f"(md_failed.extxyz, md_failed.json)"
-                ) from e
+                # controlled early stop: the trajectory entered an unreliable
+                # region of the model. Return the partial trajectory and the
+                # diagnostics as normal outputs; do not fail the task.
+                logging.warning(
+                    "ASE MD exploration stopped early by stability monitor "
+                    "(returning partial trajectory and diagnostics): %s", e,
+                )
             except (ValueError, TypeError, KeyError) as e:
-                # configuration/parameter errors are deterministic as well
+                # configuration/parameter errors are deterministic
                 raise FatalError(
                     f"ASE MD failed due to deterministic error: {e}"
                 ) from e
@@ -173,8 +188,7 @@ class RunASE(OP):
             "log": work_dir / ase_log_name,
             "traj": work_dir / ase_traj_name
         }
-        # preserve stability diagnostics if present (e.g. left by a failed
-        # attempt before a transient retry succeeded)
+        # return stability diagnostics when the monitor stopped the MD early
         for key, fname in (("md_failed", "md_failed.extxyz"), ("md_diag", "md_failed.json")):
             fpath = work_dir / fname
             if fpath.exists():

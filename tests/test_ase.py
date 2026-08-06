@@ -548,6 +548,71 @@ class TestMDStabilityMonitor(unittest.TestCase):
         atoms.set_cell(atoms.cell * (1.3 ** (1 / 3)), scale_atoms=True)
         monitor.check()  # 30% < 50% tolerance: must not raise
 
+    def _compressed_atoms_with_force(self):
+        """Atoms with a large but finite force (one atom pushed toward a neighbor)."""
+        atoms = self.atoms.copy()
+        atoms.set_calculator(EMT())
+        pos = atoms.get_positions()
+        pos[0] += [1.4 / np.sqrt(2), 1.4 / np.sqrt(2), 0.0]  # toward nearest neighbor
+        atoms.set_positions(pos)
+        fmax = np.linalg.norm(atoms.get_forces(), axis=1).max()
+        self.assertGreater(fmax, 0.0)
+        return atoms, fmax
+
+    def test_max_force_default_50(self):
+        """Default max_force is 50 eV/Ang; a larger force triggers."""
+        from pfd.exploration.md.ase import MDStabilityMonitor, MDStabilityError
+        atoms, fmax = self._compressed_atoms_with_force()
+        self.assertGreater(fmax, 50.0)  # EMT at 0.7x cell exceeds 50 eV/Ang
+        monitor = MDStabilityMonitor(atoms, vol_tol=None)  # default max_force=50
+        with self.assertRaises(MDStabilityError) as ctx:
+            monitor.check()
+        self.assertIn("force", str(ctx.exception))
+
+    def test_max_force_custom_value(self):
+        """Custom max_force: Fmax below it passes, above it triggers."""
+        from pfd.exploration.md.ase import MDStabilityMonitor, MDStabilityError
+        atoms, fmax = self._compressed_atoms_with_force()
+        relaxed = MDStabilityMonitor(atoms, vol_tol=None, max_force=fmax * 1.1)
+        relaxed.check()  # fmax < limit: must not raise
+        strict = MDStabilityMonitor(atoms, vol_tol=None, max_force=fmax * 0.9)
+        with self.assertRaises(MDStabilityError):
+            strict.check()
+
+    def test_max_force_none_disables(self):
+        """max_force=None disables the force check; other checks still work."""
+        from pfd.exploration.md.ase import MDStabilityMonitor
+        atoms, fmax = self._compressed_atoms_with_force()
+        monitor = MDStabilityMonitor(atoms, vol_tol=None, max_force=None)
+        monitor.check()  # huge force must not raise when disabled
+
+    def test_max_force_invalid(self):
+        """max_force <= 0 is rejected at construction."""
+        from pfd.exploration.md.ase import MDStabilityMonitor
+        with self.assertRaises(ValueError):
+            MDStabilityMonitor(self.atoms.copy(), max_force=0)
+        with self.assertRaises(ValueError):
+            MDStabilityMonitor(self.atoms.copy(), max_force=-5.0)
+
+    def test_diag_early_stop_fields(self):
+        """Diagnostics include requested/completed steps and early_stopped flag."""
+        import json
+        from pfd.exploration.md.ase import MDStabilityMonitor, MDStabilityError
+        atoms, fmax = self._compressed_atoms_with_force()
+        diag_file = str(self.test_dir / "md_failed.json")
+        monitor = MDStabilityMonitor(
+            atoms, vol_tol=None, diag_file=diag_file,
+            fail_file=str(self.test_dir / "md_failed.extxyz"),
+            total_steps=80000,
+        )
+        with self.assertRaises(MDStabilityError):
+            monitor.check()
+        with open(diag_file) as f:
+            diag = json.load(f)
+        self.assertEqual(diag["requested_nsteps"], 80000)
+        self.assertEqual(diag["completed_steps"], diag["step"])
+        self.assertTrue(diag["early_stopped"])
+
 
 class TestIntegrationWithCalculatorWrapper(unittest.TestCase):
     """Test integration between MDRunner and CalculatorWrapper."""

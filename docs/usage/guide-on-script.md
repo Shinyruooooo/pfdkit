@@ -147,7 +147,8 @@ The `exploration` section defines structural configuration exploration. In this 
                 "tau_p": 500,
                 "compressibility": 5e-6,
                 "seed": 12345,
-                "vol_tol": 0.2
+                "vol_tol": 0.2,
+                "max_force": 100.0
             }
         ]
     ]
@@ -161,7 +162,25 @@ Notes on the MD parameters:
 - `seed`: optional random seed for velocity initialization. Set it for reproducible MD; omit it to keep non-deterministic behavior.
 - `no_pbc`: optional, set to `true` to disable periodic boundary conditions.
 - `vol_tol`: allowed relative cell volume change in the stability watchdog, defaults to `0.2` (±20%). Increase it (e.g. `0.5`) for simulations with large physical volume changes such as phase transitions, or set it to `null` to disable the volume check entirely.
-- Stability watchdog: MD aborts with an error (dumping `md_failed.extxyz`) if temperature exceeds 5000 K, cell volume changes by more than ±`vol_tol`, max force exceeds 50 eV/Å, or NaN/inf appears in energy/forces/stress/positions.
+- `max_force`: max-force threshold (in **eV/Å**) of the stability watchdog, defaults to `50.0`. The default is conservative; for high-temperature liquid exploration in active learning, `80`–`100` eV/Å is usually more appropriate. Set it to `null` to disable the force check entirely — not recommended unless you are confident about the short-range behavior of your model.
+- Stability watchdog: when temperature exceeds 5000 K, cell volume changes by more than ±`vol_tol`, max force exceeds `max_force`, or NaN/inf appears in energy/forces/stress/positions, the MD is **stopped early in a controlled way**: the exploration task returns normally with the partial trajectory (`traj`) plus failure diagnostics (`md_failed.extxyz`, `md_failed.json`), instead of failing and being retried. The diagnostic JSON records the stop reason, step, temperature, energy, max force, volume ratio, and `requested_nsteps` / `completed_steps` / `early_stopped: true`. The partial trajectory is still used downstream (frame extraction/selection works with however many frames exist), since the pre-explosion frames and the final unstable structure are valuable for active learning.
+
+For example, a high-temperature liquid GeTe NPT stage:
+
+```json
+{
+    "ens": "npt",
+    "temp": 1500,
+    "press": 1,
+    "dt": 0.5,
+    "tau_t": 500,
+    "tau_p": 2000,
+    "compressibility": 5.0e-6,
+    "vol_tol": 0.5,
+    "max_force": 100.0,
+    "seed": null
+}
+```
 
 The `select_confs` node filters unphysical configurations and compresses data using entropy-based measures:
 

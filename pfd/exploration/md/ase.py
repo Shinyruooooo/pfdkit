@@ -38,6 +38,7 @@ class MDParameters:
     seed: Optional[int] = None  # random seed for velocity initialization; None keeps non-deterministic behavior
     no_pbc: bool = False  # disable periodic boundary conditions
     vol_tol: Optional[float] = 0.2  # allowed relative cell volume change in stability monitor; None disables the volume check
+    max_force: Optional[float] = 50.0  # max per-atom force threshold in eV/Angstrom in stability monitor; None disables the force check
     custom_config: Dict[str, Any] = field(default_factory=dict)   # Custom configuration
     output_prefix: str = "md"
     ## for optimization
@@ -85,6 +86,7 @@ class MDStabilityMonitor:
     - cell volume outside ``(1 +- vol_tol) * V0`` where V0 is the initial volume
       (skipped when ``vol_tol`` is None)
     - max per-atom force norm above ``max_force`` (eV/Angstrom)
+      (skipped when ``max_force`` is None)
     - NaN or inf in energy, forces, stress (if available) or positions
 
     On violation the current structure is written to ``fail_file`` and a JSON
@@ -100,14 +102,20 @@ class MDStabilityMonitor:
         diag_file: str = "md_failed.json",
         max_temp: float = 5000.0,
         vol_tol: Optional[float] = 0.2,
-        max_force: float = 50.0,
+        max_force: Optional[float] = 50.0,
+        total_steps: Optional[int] = None,
     ):
+        if max_force is not None and max_force <= 0:
+            raise ValueError(
+                f"max_force must be positive (eV/Angstrom) or None, got {max_force}"
+            )
         self.atoms = atoms
         self.fail_file = fail_file
         self.diag_file = diag_file
         self.max_temp = max_temp
         self.vol_tol = vol_tol
         self.max_force = max_force
+        self.total_steps = total_steps
         self.v0 = atoms.get_volume()
         # number of MD steps completed; observers are also called once at the
         # initial state (step 0), so the counter is incremented after each check
@@ -135,7 +143,7 @@ class MDStabilityMonitor:
                 reasons.append("NaN/inf in forces")
             else:
                 fmax = np.linalg.norm(forces, axis=1).max()
-                if fmax > self.max_force:
+                if self.max_force is not None and fmax > self.max_force:
                     reasons.append(
                         f"max force {fmax:.2f} eV/Ang exceeds limit {self.max_force} eV/Ang"
                     )
@@ -193,6 +201,9 @@ class MDStabilityMonitor:
             "volume_A3": _json_value(volume),
             "initial_volume_A3": _json_value(self.v0),
             "volume_ratio": _json_value(volume_ratio),
+            "requested_nsteps": int(self.total_steps) if self.total_steps is not None else None,
+            "completed_steps": int(step),
+            "early_stopped": True,
         }
         try:
             with open(self.diag_file, "w") as f:
@@ -323,12 +334,18 @@ class MDRunner:
         traj = Trajectory(traj_file, 'w', atoms=self.atoms)
         dyn.attach(traj.write, interval=params.traj_freq)
         # stability watchdog: abort on blow-up / NaN instead of running on garbage
-        monitor = MDStabilityMonitor(self.atoms, vol_tol=params.vol_tol)
+        monitor = MDStabilityMonitor(
+            self.atoms, vol_tol=params.vol_tol, max_force=params.max_force,
+            total_steps=params.nsteps,
+        )
         dyn.attach(monitor.check, interval=1)
             # Run NPT
         self.logger.info("#### Starting MD...")
         start_time = time.time()
-        dyn.run(params.nsteps)
+        try:
+            dyn.run(params.nsteps)
+        finally:
+            traj.close()
         elapsed = time.time() - start_time
         self.logger.info(f"#### MD simulation completed in {elapsed:.2f} s")
         
@@ -369,13 +386,19 @@ class MDRunner:
         traj = Trajectory(traj_file, 'w', atoms=self.atoms)
         dyn.attach(traj.write, interval=params.traj_freq)
         # stability watchdog: abort on blow-up / NaN instead of running on garbage
-        monitor = MDStabilityMonitor(self.atoms, vol_tol=params.vol_tol)
+        monitor = MDStabilityMonitor(
+            self.atoms, vol_tol=params.vol_tol, max_force=params.max_force,
+            total_steps=params.nsteps,
+        )
         dyn.attach(monitor.check, interval=1)
 
         # Run NVT
         self.logger.info("#### Starting NVT simulation...")
         start_time = time.time()
-        dyn.run(params.nsteps)
+        try:
+            dyn.run(params.nsteps)
+        finally:
+            traj.close()
         elapsed = time.time() - start_time
         self.logger.info(f"#### NVT simulation completed in {elapsed:.2f} s")
         # Store history
