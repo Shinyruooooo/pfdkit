@@ -213,18 +213,18 @@ class AseTaskGroup(ConfSamplingTaskGroup):
 
         return [
             Argument("temps", list, optional=False, doc=doc_temps),
-            Argument("press", list, optional=True, default=None, doc=doc_press),
+            Argument("press", [list, type(None)], optional=True, default=None, doc=doc_press),
             Argument("ens", str, optional=True, default="npt", doc=doc_ens),
             Argument("dt", float, optional=True, default=2, doc=doc_dt),
             Argument("nsteps", int, optional=True, default=1000, doc=doc_nsteps),
             Argument("trj_freq", int, optional=True, default=100, doc=doc_trj_freq),
             Argument("tau_t", float, optional=True, default=100, doc=doc_tau_t),
             Argument("tau_p", float, optional=True, default=500, doc=doc_tau_p),
-            Argument("compressibility", float, optional=True, default=None, doc=doc_compressibility),
-            Argument("seed", int, optional=True, default=None, doc=doc_seed),
+            Argument("compressibility", [float, type(None)], optional=True, default=None, doc=doc_compressibility),
+            Argument("seed", [int, type(None)], optional=True, default=None, doc=doc_seed),
             Argument("no_pbc", bool, optional=True, default=False, doc=doc_no_pbc),
-            Argument("vol_tol", float, optional=True, default=0.2, doc=doc_vol_tol),
-            Argument("max_force", float, optional=True, default=50.0, doc=doc_max_force),
+            Argument("vol_tol", [float, type(None)], optional=True, default=0.2, doc=doc_vol_tol),
+            Argument("max_force", [float, type(None)], optional=True, default=50.0, doc=doc_max_force),
         ]
 
     @classmethod

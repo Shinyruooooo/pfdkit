@@ -613,6 +613,33 @@ class TestMDStabilityMonitor(unittest.TestCase):
         self.assertEqual(diag["completed_steps"], diag["step"])
         self.assertTrue(diag["early_stopped"])
 
+    def test_normalize_config_explicit_null(self):
+        """Explicit JSON null for vol_tol/max_force/seed/compressibility/press
+        passes dargs validation and reaches set_md as None."""
+        from pfd.exploration.task.ase_task_group import AseTaskGroup
+        conf = {
+            "conf_idx": [0], "n_sample": 1, "ens": "npt", "dt": 0.5,
+            "nsteps": 100, "temps": [1500], "press": [1], "trj_freq": 10,
+            "tau_t": 500, "tau_p": 2000, "compressibility": 5e-6,
+            "seed": None, "vol_tol": None, "max_force": None,
+        }
+        data = AseTaskGroup.normalize_config(conf, strict=False)
+        self.assertIsNone(data["vol_tol"])
+        self.assertIsNone(data["max_force"])
+        self.assertIsNone(data["seed"])
+        tg = AseTaskGroup()
+        tg.set_md(
+            temps=data["temps"], press=data["press"],
+            **{k: v for k, v in data.items()
+               if k not in ("conf_idx", "n_sample", "temps", "press")},
+        )
+        self.assertIsNone(tg.vol_tol)
+        self.assertIsNone(tg.max_force)
+        # NVT without press: explicit null must also be accepted
+        data_nvt = AseTaskGroup.normalize_config(
+            {"temps": [300], "ens": "nvt", "press": None}, strict=False)
+        self.assertIsNone(data_nvt["press"])
+
 
 class TestIntegrationWithCalculatorWrapper(unittest.TestCase):
     """Test integration between MDRunner and CalculatorWrapper."""
