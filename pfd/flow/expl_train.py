@@ -169,6 +169,29 @@ def _expl_tr_blk(
     )
     steps.add(prep_run_explore)
 
+    # aggregate MD early-stop diagnostics of this iteration; runs in parallel
+    # with select_confs and only feeds the convergence evaluation
+    from pfd.op.expl_stability import ExplStabilityOP
+
+    expl_stability = Step(
+        name + "-expl-stability",
+        template=PythonOPTemplate(
+            ExplStabilityOP,
+            python_packages=upload_python_packages,
+            **test_template_config,
+        ),
+        parameters={
+            "config": steps.inputs.parameters["evaluate_config"],
+        },
+        artifacts={
+            "trajs": prep_run_explore.outputs.artifacts["trajs"],
+            "md_diags": prep_run_explore.outputs.artifacts["md_diags"],
+        },
+        key="--".join(["%s" % steps.inputs.parameters["block_id"], "expl-stability"]),
+        executor=test_executor,
+    )
+    steps.add(expl_stability)
+
     select_confs = Step(
         name + "-select-confs",
         template=PythonOPTemplate(
@@ -259,7 +282,8 @@ def _expl_tr_blk(
             **test_template_config,
         ),
         parameters={
-            "config": steps.inputs.parameters["evaluate_config"]
+            "config": steps.inputs.parameters["evaluate_config"],
+            "expl_stability": expl_stability.outputs.parameters["report"],
         },
         artifacts={
             "structures": collect_data_train.outputs.artifacts["test_structures"],

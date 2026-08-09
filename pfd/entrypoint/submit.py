@@ -402,10 +402,14 @@ class FlowGen:
             _expl_stages.append(expl_stage)
 
         #### scheduler for workflow management
+        expl_stability_config = config["evaluate"].get("expl_stability") or {}
         scheduler = Scheduler(
             explore_stages=_expl_stages,
             max_iter=max_iter,
-            train_config=train_config
+            train_config=train_config,
+            consecutive_clean_iters=expl_stability_config.get(
+                "consecutive_clean_iters", 1
+            ),
         )
 
         #### upload init_data

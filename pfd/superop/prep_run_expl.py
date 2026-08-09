@@ -75,6 +75,9 @@ class PrepRunExpl(Steps):
             #"model_devis": OutputArtifact(),
             #"plm_output": OutputArtifact(),
             "optional_outputs": OutputArtifact(),
+            # one entry per early-stopped slice (None for clean slices)
+            "md_faileds": OutputArtifact(optional=True),
+            "md_diags": OutputArtifact(optional=True),
         }
 
         super().__init__(
@@ -209,5 +212,11 @@ def _prep_run_expl(
     prep_run_steps.outputs.artifacts[
         "optional_outputs"
     ]._from = run_lmp.outputs.artifacts["optional_output"]
+    prep_run_steps.outputs.artifacts["md_faileds"]._from = run_lmp.outputs.artifacts[
+        "md_failed"
+    ]
+    prep_run_steps.outputs.artifacts["md_diags"]._from = run_lmp.outputs.artifacts[
+        "md_diag"
+    ]
 
     return prep_run_steps

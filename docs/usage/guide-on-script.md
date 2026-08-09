@@ -241,6 +241,34 @@ The `evaluate` section tests the model against a test dataset. Iterations contin
 }
 ```
 
+Optionally, convergence can additionally require **exploration stability**: an iteration then counts as converged only when the exploration MD slices of that iteration did not stop early (temperature/force/NaN blowups detected by the stability watchdog) beyond the configured tolerances. Add the `expl_stability` section to `evaluate`:
+
+```json
+"evaluate": {
+    "test_size": 0.3,
+    "model": "dp",
+    "converge": {
+        "type": "force_rmse",
+        "RMSE": 0.06
+    },
+    "expl_stability": {
+        "enabled": true,
+        "max_failed_slices": 1,
+        "max_lost_fraction": null,
+        "ignored_reasons": ["volume"],
+        "consecutive_clean_iters": 2
+    }
+}
+```
+
+- `enabled`: the mere presence of the section enables the check; set to `false` to disable it explicitly.
+- `max_failed_slices`: number of early-stopped slices tolerated per iteration (default `0`).
+- `max_lost_fraction`: tolerated fraction of lost MD steps, summed over counted early-stopped slices and divided by the total slice count (default `null`, i.e. not applied).
+- `ignored_reasons`: stop-reason keywords that are reported but do not count against convergence. Defaults to `["volume"]`, because `vol_tol` triggers can be physically real (phase transitions, high-pressure compression). Note: the watchdog still stops such trajectories early regardless of this setting — to also tolerate the volume change during the MD itself, increase `vol_tol` or set it to `null` in the stage config.
+- `consecutive_clean_iters`: number of consecutive iterations that must pass both the accuracy and the stability check before advancing to the next exploration stage (default `1`). Since MD survival is stochastic when `seed` is unset, a value of `2` protects against lucky passes.
+
+When the stability check is not configured (no `expl_stability` section), convergence behaves exactly as before: test-set accuracy only.
+
 ## Distillation
 The distillation script is similar to fine-tuning, with key differences. Change the `task/type` to `dist` and label new frames using the fine-tuned model:
 

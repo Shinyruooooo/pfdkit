@@ -75,3 +75,9 @@ class ConvReport:
     energy_rmse: Optional[float] = None
     selected_frame: int = 0
     converged: bool = False
+    # exploration stability (MD early-stop) summary of the current iteration;
+    # None means the stability check was not enabled
+    expl_stable: Optional[bool] = None
+    expl_failed_slices: int = 0
+    expl_total_slices: int = 0
+    expl_reasons: str = ""

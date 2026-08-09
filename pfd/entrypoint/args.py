@@ -336,6 +336,55 @@ def variant_conv():
     )
 
 
+def expl_stability_args():
+    doc_enabled = "Enable the exploration stability convergence check."
+    doc_max_failed = (
+        "Max number of exploration slices allowed to stop early "
+        "(for counted reasons) per iteration."
+    )
+    doc_max_lost = (
+        "Max allowed fraction of lost MD steps, summed over counted "
+        "early-stopped slices and normalized by the total slice count. "
+        "Set null to disable this check."
+    )
+    doc_ignored = (
+        "Reason keywords (matched against the stability monitor stop reason) "
+        "that are reported but do not count against convergence, "
+        "e.g. volume changes that are physically expected."
+    )
+    doc_consecutive = (
+        "Number of consecutive clean iterations (accuracy and stability both "
+        "passed) required before advancing to the next exploration stage."
+    )
+    return [
+        Argument("enabled", bool, optional=True, default=True, doc=doc_enabled),
+        Argument(
+            "max_failed_slices", int, optional=True, default=0, doc=doc_max_failed
+        ),
+        Argument(
+            "max_lost_fraction",
+            [float, type(None)],
+            optional=True,
+            default=None,
+            doc=doc_max_lost,
+        ),
+        Argument(
+            "ignored_reasons",
+            list,
+            optional=True,
+            default=["volume"],
+            doc=doc_ignored,
+        ),
+        Argument(
+            "consecutive_clean_iters",
+            int,
+            optional=True,
+            default=1,
+            doc=doc_consecutive,
+        ),
+    ]
+
+
 def evaluate_args():
     doc_max_sel = "Maximum number of selected configurations"
     doc_model = (
@@ -343,6 +392,11 @@ def evaluate_args():
         "It should be consistent with the model type used in training."
     )
     doc_converge = "The method of convergence check."
+    doc_expl_stability = (
+        "Exploration stability convergence check: an iteration only counts as "
+        "converged when the exploration slices did not stop early (MD blowup) "
+        "beyond the configured tolerances. Omit to disable."
+    )
     return [
         Argument("max_sel", int, optional=True, default=50, doc=doc_max_sel),
         Argument("model", str, optional=True, default="dp", doc=doc_model),
@@ -354,6 +408,14 @@ def evaluate_args():
             optional=True,
             default={},
             doc=doc_converge,
+        ),
+        Argument(
+            "expl_stability",
+            dict,
+            expl_stability_args(),
+            optional=True,
+            default=None,
+            doc=doc_expl_stability,
         ),
     ]
 

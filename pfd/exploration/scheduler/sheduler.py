@@ -19,6 +19,7 @@ class Scheduler:
         train_config: dict = {},
         finetune: bool = False,
         recursive_finetune: bool = False,
+        consecutive_clean_iters: int = 1,
     ) -> None:
 
         # exploration stages
@@ -64,6 +65,11 @@ class Scheduler:
 
         # train config
         self._train_config = train_config
+
+        # number of consecutive clean (accuracy + stability passed) iterations
+        # required before advancing to the next exploration stage
+        self._consecutive_clean_iters = max(1, int(consecutive_clean_iters))
+        self._clean_streak = 0
 
     @property
     def ft(self):
@@ -139,7 +145,14 @@ class Scheduler:
             logging.info("Max number of iteration reached. Stop exploration...")
             self._converge = True
         elif convergence_stage is True:
-            if self.idx_stage + 1 >= len(self.expl_stages):
+            self._clean_streak += 1
+            if self._clean_streak < self._consecutive_clean_iters:
+                logging.info(
+                    "Clean iteration %d/%d, keep exploring the current stage...",
+                    self._clean_streak,
+                    self._consecutive_clean_iters,
+                )
+            elif self.idx_stage + 1 >= len(self.expl_stages):
                 logging.info("All stages converged...")
                 self._converge = True
             else:
@@ -147,6 +160,10 @@ class Scheduler:
                     "Task %s converged, continue to the next stage..." % self.idx_stage
                 )
                 self.next_stage()
+                self._clean_streak = 0
+        else:
+            # a failed (accuracy or stability) iteration resets the streak
+            self._clean_streak = 0
                 
         
 
