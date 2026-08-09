@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 from typing import Dict, List
 
-from dflow.python import OP, OPIO, Artifact, OPIOSign, Parameter
+from dflow.python import OP, OPIO, Artifact, BigParameter, OPIOSign, Parameter
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -39,8 +39,10 @@ class ExplStabilityOP(OP):
                 # one diag per early-stopped slice (optional output of RunASE)
                 "md_diags": Artifact(List[Path], optional=True),
                 # the full evaluate config dict; the "expl_stability"
-                # sub-section is extracted from it
-                "config": Parameter(Dict, default={}),
+                # sub-section is extracted from it. Must be a BigParameter:
+                # the flow passes evaluate_config as a dflow big parameter
+                # (artifact-backed), like ModelTestOP does.
+                "config": BigParameter(dict, default={}),
             }
         )
 
