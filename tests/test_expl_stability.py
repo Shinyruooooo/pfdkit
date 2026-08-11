@@ -168,6 +168,19 @@ class TestExplStabilityOP(unittest.TestCase):
         report = self._run(md_diags=[task_dir], config={"expl_stability": {}})
         self.assertEqual(report["failed_slices"], 1)
 
+    def test_none_entries_are_skipped(self):
+        """dflow pads missing optional outputs with None list items."""
+        diag = self._write_diag(
+            "d0.json", "temperature 8128.1 K exceeds limit 5000.0 K"
+        )
+        report = self._run(
+            md_diags=[None, None, diag, None],
+            config={"expl_stability": {}},
+        )
+        self.assertEqual(report["failed_slices"], 1)
+        self.assertEqual(report["total_slices"], 4)
+        self.assertNotIn("corrupted diagnostics", report["reasons"])
+
 
 class TestExplStabilityArgs(unittest.TestCase):
     """The expl_stability section passes dargs validation of evaluate_args."""

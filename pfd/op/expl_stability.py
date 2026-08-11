@@ -77,6 +77,10 @@ class ExplStabilityOP(OP):
 
         diags = []
         for path in md_diags:
+            # dflow passes None for slices without the optional output
+            # (clean slices that never stopped early)
+            if path is None:
+                continue
             p = Path(path)
             # dflow materializes clean slices (no optional output) as
             # placeholder entries: empty dirs, empty files, or small JSON
