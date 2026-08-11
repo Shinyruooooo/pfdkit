@@ -77,12 +77,27 @@ class ExplStabilityOP(OP):
 
         diags = []
         for path in md_diags:
+            p = Path(path)
+            # dflow materializes clean slices (no optional output) as
+            # placeholder entries: empty dirs, empty files, or small JSON
+            # markers like {"path_list": [{"dflow_list_item": null, ...}]}
+            if p.is_dir():
+                inner = p / "md_failed.json"
+                if not inner.is_file():
+                    continue  # placeholder for a clean slice
+                p = inner
             try:
-                with open(path) as f:
-                    diags.append(json.load(f))
+                text = p.read_text()
+                if not text.strip():
+                    continue  # empty placeholder
+                diag = json.loads(text)
             except Exception as e:
                 logging.warning("Corrupted diagnostics file %s: %s", path, e)
                 diags.append({"reason": "corrupted diagnostics"})
+                continue
+            if not isinstance(diag, dict) or "reason" not in diag:
+                continue  # dflow placeholder, not a real diagnostic
+            diags.append(diag)
 
         counted = []
         ignored = []

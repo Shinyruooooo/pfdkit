@@ -138,6 +138,36 @@ class TestExplStabilityOP(unittest.TestCase):
         self.assertTrue(report["stable"])
         self.assertEqual(report["ignored_slices"], 1)
 
+    def test_dflow_placeholders_are_skipped(self):
+        """dflow materializes clean slices as null-item placeholders; they
+        must not count as corrupted/failed diagnostics."""
+        marker = self.test_dir / "marker"
+        marker.write_text('{"path_list": [{"dflow_list_item": null, "order": 1}]}')
+        empty_dir = self.test_dir / "empty_task"
+        empty_dir.mkdir()
+        empty_file = self.test_dir / "empty.json"
+        empty_file.write_text("")
+        diag = self._write_diag(
+            "d0.json", "temperature 8128.1 K exceeds limit 5000.0 K"
+        )
+        report = self._run(
+            md_diags=[marker, empty_dir, empty_file, diag],
+            config={"expl_stability": {}},
+        )
+        self.assertEqual(report["failed_slices"], 1)
+        self.assertFalse(report["stable"])  # 1 real failure > default 0
+        self.assertNotIn("corrupted diagnostics", report["reasons"])
+
+    def test_dir_entry_with_real_diag_is_loaded(self):
+        """If dflow passes the task directory, pick up md_failed.json inside."""
+        task_dir = self.test_dir / "task.000000"
+        task_dir.mkdir()
+        (task_dir / "md_failed.json").write_text(
+            json.dumps({"reason": "max force 74.8 eV/Ang exceeds limit 50.0 eV/Ang"})
+        )
+        report = self._run(md_diags=[task_dir], config={"expl_stability": {}})
+        self.assertEqual(report["failed_slices"], 1)
+
 
 class TestExplStabilityArgs(unittest.TestCase):
     """The expl_stability section passes dargs validation of evaluate_args."""
