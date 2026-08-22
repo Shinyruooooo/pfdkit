@@ -184,7 +184,42 @@ For example, a high-temperature liquid GeTe NPT stage:
 
 ### LAMMPS exploration with user-written templates
 
-Set `"type": "lmp"` to explore with LAMMPS instead of ASE. In this mode you write the LAMMPS input script yourself (ensemble, ramp/hold stages, fixes, computes — full control), and PFD only rewrites a small, well-defined set of things:
+Set `"type": "lmp"` to explore with LAMMPS instead of ASE. Two modes are available per task group:
+
+- **Parameterized mode** (ASE-style): provide `ens`/`temps`/`press`/`dt`/`nsteps`/`tau_t`/`tau_p`/`trj_freq`/`seed` and PFD generates the LAMMPS input for you. Units match the ASE stage convention: `dt`/`tau_t`/`tau_p` in **fs**, `press` in **bar**, `temps` in **K**.
+- **Template mode**: provide `input_lmp_template` (path to a user-written script) plus optional `revisions`. Use this for custom flows (ramp/hold, extra fixes/computes, anything LAMMPS supports).
+
+Parameterized example (NPT at 5 temperatures × 2 pressures, 2 initial confs):
+
+```json
+"exploration": {
+    "type": "lmp",
+    "config": {"command": "lmp -k on g 1 -sf kk"},
+    "stages": [
+        [
+            {
+                "conf_idx": [0, 3],
+                "n_sample": 1,
+                "ens": "npt",
+                "temps": [300, 800, 1200, 1700, 2000],
+                "press": [1, 10000],
+                "dt": 1,
+                "nsteps": 50000,
+                "tau_t": 500,
+                "tau_p": 2000,
+                "trj_freq": 1000,
+                "seed": 12345
+            }
+        ]
+    ]
+}
+```
+
+This creates `n_sample × len(temps) × len(press)` tasks per initial conf. `type_map` (element order of the generated data file / pair_coeff) is inferred from the configurations by default; set it explicitly in the stage to override.
+
+#### Template mode
+
+In this mode you write the LAMMPS input script yourself (ensemble, ramp/hold stages, fixes, computes — full control), and PFD only rewrites a small, well-defined set of things:
 
 - the model file name in the `pair_style deepmd` line — the template must use the placeholder **`pfd_model.pt2`**; PFD provides the frozen+compressed model under this name at run time (a `prep-model` step freezes/compresses the checkpoint with `dp --pt-expt freeze/compress` between iterations);
 - the structure file name in `read_data` — rewritten to `conf.lmp` (PFD converts the sampled configuration);

@@ -374,8 +374,9 @@ class FlowGen:
         expl_stages = config["exploration"]["stages"]
         explore_config = config["exploration"]["config"]
 
-        #### LAMMPS exploration: read user-written templates and inject
-        #### the type_map (from the template pair_coeff) into the run config
+        #### LAMMPS exploration: two modes per task group:
+        #### - template mode: has 'input_lmp_template' (user-written script)
+        #### - parameterized mode: ASE-style keys (ens/temps/press/...)
         if explore_style == "lmp":
             from pfd.exploration.task.lmp_template_task_group import (
                 parse_pair_coeff_elements,
@@ -384,19 +385,23 @@ class FlowGen:
             for stg in expl_stages:
                 for task_grp in stg:
                     tmpl_path = task_grp.get("input_lmp_template")
-                    if tmpl_path is None:
-                        raise ValueError(
-                            "each lmp exploration task group requires "
-                            "'input_lmp_template' (path to a LAMMPS input script)"
-                        )
-                    with open(tmpl_path) as fp:
-                        task_grp["input_lmp_template"] = fp.read()
+                    if tmpl_path is not None:
+                        with open(tmpl_path) as fp:
+                            task_grp["input_lmp_template"] = fp.read()
+            # inject type_map into the run config; in template mode it comes
+            # from the template pair_coeff line
             if not explore_config.get("type_map"):
-                elements = parse_pair_coeff_elements(
-                    expl_stages[0][0]["input_lmp_template"].split("\n")
-                )
-                if elements:
-                    explore_config["type_map"] = elements
+                for stg in expl_stages:
+                    for task_grp in stg:
+                        if task_grp.get("input_lmp_template"):
+                            elements = parse_pair_coeff_elements(
+                                task_grp["input_lmp_template"].split("\n")
+                            )
+                            if elements:
+                                explore_config["type_map"] = elements
+                                break
+                    if explore_config.get("type_map"):
+                        break
 
         #### confs selection config
         select_confs_config = config["select_confs"]
@@ -437,9 +442,19 @@ class FlowGen:
         for stg in expl_stages:
             expl_stage=ExplorationStage()
             for task_grp in stg:
+                # LAMMPS: dispatch template vs parameterized per task group
+                if explore_style == "lmp":
+                    from pfd.exploration.task import LmpParamTaskGroup
+                    grp_style = (
+                        task_grp_style
+                        if task_grp.get("input_lmp_template") is not None
+                        else LmpParamTaskGroup
+                    )
+                else:
+                    grp_style = task_grp_style
                 # Use the unified method for creating task groups
                 expl_stage.add_task_group(
-                    task_grp_style.make_task_grp_from_conf(
+                    grp_style.make_task_grp_from_conf(
                         task_grp,
                         init_confs,
                     )

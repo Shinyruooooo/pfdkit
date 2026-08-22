@@ -24,3 +24,7 @@ from .lmp_template_task_group import (
     LmpTemplateTaskGroup,
 )
 
+from .lmp_param_task_group import (
+    LmpParamTaskGroup,
+)
+
