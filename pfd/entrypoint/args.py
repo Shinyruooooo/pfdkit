@@ -182,15 +182,38 @@ def variant_explore():
     doc = "The type of the exploration"
     doc_ase = "Exploration by ASE"
     doc_calypso = "Exploration by Calypso"
+    doc_lmp = "Exploration by LAMMPS with a user-written input template"
     return Variant(
         "type",
         [
             Argument("ase", dict, ase_args(), doc=doc_ase),
             Argument("calypso", dict, caly_args(), doc=doc_calypso),
             Argument("calypso:merge", dict, caly_args(), doc=doc_calypso),
+            Argument("lmp", dict, lmp_args(), doc=doc_lmp),
         ],
         doc=doc,
     )
+
+
+def lmp_args():
+    from pfd.op.run_lmp import RunLmp
+
+    doc_stages = (
+        "Exploration stages. Same structure as ASE stages; each task group "
+        "takes `conf_idx`, `n_sample`, `input_lmp_template` (path to a "
+        "user-written LAMMPS input script), `revisions` (variable overrides), "
+        "`trj_freq` and an optional `type_map`."
+    )
+    doc_config = (
+        "Configuration of LAMMPS exploration (passed to RunLmp: "
+        "`command`, `max_temp`, `type_map`)"
+    )
+    return [
+        Argument(
+            "config", dict, RunLmp.lmp_args(), optional=True, default={}, doc=doc_config
+        ),
+        Argument("stages", List[List[dict]], optional=False, doc=doc_stages),
+    ]
 
 
 def explore_args():

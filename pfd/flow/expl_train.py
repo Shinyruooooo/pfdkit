@@ -318,6 +318,8 @@ class ExplTrainLoop(Steps):
         stage_scheduler_op: Type[OP],
         expl_train_blk_op: OPTemplate,
         scheduler_config: dict,
+        prep_model_op: Optional[Type[OP]] = None,
+        prep_model_config: Optional[dict] = None,
         upload_python_packages: Optional[List[os.PathLike]] = None,
     ):
         self._input_parameters = {
@@ -368,6 +370,8 @@ class ExplTrainLoop(Steps):
             stage_scheduler_op=stage_scheduler_op,
             expl_train_blk_op=expl_train_blk_op,
             scheduler_config=scheduler_config,
+            prep_model_op=prep_model_op,
+            prep_model_config=prep_model_config,
             upload_python_packages=upload_python_packages,
         )
 
@@ -394,6 +398,8 @@ def _loop(
     stage_scheduler_op: Type[OP],
     expl_train_blk_op: OPTemplate,
     scheduler_config: dict,
+    prep_model_op: Optional[Type[OP]] = None,
+    prep_model_config: Optional[dict] = None,
     upload_python_packages: Optional[List[os.PathLike]] = None,
 ):
     scheduler_config = deepcopy(scheduler_config)
@@ -425,6 +431,35 @@ def _loop(
     )
     loop.add(stage_scheduler)
 
+    # optional freeze+compress step: LAMMPS exploration runs on a frozen
+    # .pt2 model, so the checkpoint chosen by the scheduler is frozen first.
+    # The unfrozen checkpoint still propagates to the next iteration.
+    if prep_model_op is not None:
+        pm_config = deepcopy(prep_model_config) if prep_model_config else {}
+        pm_template_config = pm_config.pop("template_config", {})
+        pm_executor = init_executor(pm_config.pop("executor", None))
+        prep_model = Step(
+            name=name + "-prep-model",
+            template=PythonOPTemplate(
+                prep_model_op,
+                python_packages=upload_python_packages,
+                **pm_template_config,
+            ),
+            parameters={"config": {}},
+            artifacts={
+                "model": stage_scheduler.outputs.artifacts["expl_model"],
+            },
+            key="--".join(
+                ["iter-%s" % stage_scheduler.outputs.parameters["iter_id"], "prep-model"]
+            ),
+            executor=pm_executor,
+            **pm_config,
+        )
+        loop.add(prep_model)
+        expl_model_for_block = prep_model.outputs.artifacts["frozen_model"]
+    else:
+        expl_model_for_block = stage_scheduler.outputs.artifacts["expl_model"]
+
     expl_train_blk = Step(
         name=name + "-exploration-train",
         template=expl_train_blk_op,
@@ -441,9 +476,7 @@ def _loop(
             "collect_data_config": loop.inputs.parameters["collect_data_config"],
         },
         artifacts={
-            "expl_model": stage_scheduler.outputs.artifacts[
-                "expl_model"
-            ],  # model for exploration
+            "expl_model": expl_model_for_block,  # model for exploration
             "init_model": stage_scheduler.outputs.artifacts[
                 "init_model"
             ],  # starting point for finetune

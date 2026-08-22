@@ -20,3 +20,7 @@ from .calypso_task_group import (
     CalyTaskGroup,
 )
 
+from .lmp_template_task_group import (
+    LmpTemplateTaskGroup,
+)
+

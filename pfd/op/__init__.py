@@ -11,6 +11,10 @@ from .prep_md import PrepASE
 
 from .run_md import RunASE
 
+from .run_lmp import RunLmp
+
+from .prep_model import PrepModelFreeze
+
 from .train import *
 
 from .calypso import *

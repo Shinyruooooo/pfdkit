@@ -77,7 +77,7 @@ class ConfSelectorFrames(ConfSelector):
 
         atoms_list = self.traj_render.get_confs(
             trajs,
-            self.conf_filters,
-            optional_outputs,
+            conf_filters=self.conf_filters,
+            optional_outputs=optional_outputs,
         )
         return atoms_list

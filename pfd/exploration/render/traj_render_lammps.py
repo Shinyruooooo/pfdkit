@@ -9,6 +9,7 @@ from typing import (
     Union,
 )
 import dpdata
+from ase import Atoms
 
 from .traj_render import (
     TrajRender,
@@ -27,35 +28,37 @@ class TrajRenderLammps(TrajRender):
         self,
         nopbc: bool = False,
         use_ele_temp: int = 0,
+        type_map: Optional[List[str]] = None,
     ):
         self.nopbc = nopbc
         self.use_ele_temp = use_ele_temp
+        # element order of the LAMMPS data/dump files; keyword-only source
+        # so positional callers passing conf_filters cannot clobber it
+        self.type_map = type_map
 
     def get_confs(
         self,
         trajs: List[Path],
-        # id_selected: List[List[int]],
-        type_map: Optional[List[str]] = None,
         conf_filters: Optional["ConfFilters"] = None,
         optional_outputs: Optional[List[Path]] = None,
-    ) -> dpdata.MultiSystems:
+    ) -> List[Atoms]:
+        """Read LAMMPS dump trajectories into a list of ASE Atoms.
+
+        Mirrors TrajRenderASE.get_confs: the downstream selector consumes
+        lists of ASE Atoms, so dpdata systems are converted frame by frame.
+        The element order (``type_map``) comes from the constructor.
+        """
+        from pfd.utils.ase2xyz import dpdata2ase
+
         ntraj = len(trajs)
         if optional_outputs:
             assert ntraj == len(optional_outputs)
 
-        traj_fmt = "lammps/dump"
-        ms = dpdata.MultiSystems(type_map=type_map)
+        atoms_list = []
         for ii in range(ntraj):
-            # if len(id_selected[ii]) > 0:
-            ss = dpdata.System(trajs[ii], fmt=traj_fmt, type_map=type_map)
+            ss = dpdata.System(trajs[ii], fmt="lammps/dump", type_map=self.type_map)
             ss.nopbc = self.nopbc
-            # ss = ss.sub_system(id_selected[ii])
-            ms.append(ss)
+            atoms_list.extend(dpdata2ase(ss))
         if conf_filters is not None:
-            ms2 = dpdata.MultiSystems(type_map=type_map)
-            for s in ms:
-                s2 = conf_filters.check(s)
-                if len(s2) > 0:
-                    ms2.append(s2)
-            ms = ms2
-        return ms
+            atoms_list = conf_filters.check(atoms_list)
+        return atoms_list

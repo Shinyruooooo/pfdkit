@@ -182,6 +182,71 @@ For example, a high-temperature liquid GeTe NPT stage:
 }
 ```
 
+### LAMMPS exploration with user-written templates
+
+Set `"type": "lmp"` to explore with LAMMPS instead of ASE. In this mode you write the LAMMPS input script yourself (ensemble, ramp/hold stages, fixes, computes — full control), and PFD only rewrites a small, well-defined set of things:
+
+- the model file name in the `pair_style deepmd` line — the template must use the placeholder **`pfd_model.pt2`**; PFD provides the frozen+compressed model under this name at run time (a `prep-model` step freezes/compresses the checkpoint with `dp --pt-expt freeze/compress` between iterations);
+- the structure file name in `read_data` — rewritten to `conf.lmp` (PFD converts the sampled configuration);
+- the dump with id **`pfd_traj`** — its frequency and file name are rewritten; the dump must contain `id type element x y z fx fy fz` columns (forces are needed downstream);
+- `variable NAME equal ...` lines listed in `revisions` are overridden;
+- `atom_modify map yes` is inserted automatically if missing (required by graph-lowered `.pt2` models).
+
+If the template misses any of the contract (`pair_style` with the placeholder, `read_data`, a `pfd_traj` dump with force columns), submission fails with an explicit error. The `type_map` (element order of the generated data file) is taken from the template's `pair_coeff` line by default.
+
+Example stage configuration:
+
+```json
+"exploration": {
+    "type": "lmp",
+    "config": {"command": "lmp -k on g 1 -sf kk"},
+    "stages": [
+        [
+            {
+                "conf_idx": [0],
+                "n_sample": 1,
+                "input_lmp_template": "./explore/in.melt.lammps",
+                "revisions": {"TSTOP": 2000, "NSTEPS": 500000, "SEED": 12345},
+                "trj_freq": 50
+            }
+        ]
+    ]
+}
+```
+
+Template example (`./explore/in.melt.lammps`):
+
+```
+units           metal
+dimension       3
+boundary        p p p
+atom_style      atomic
+read_data       structure.lmp
+pair_style      deepmd pfd_model.pt2
+pair_coeff      * * Ge Te
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check yes
+variable        T equal 1000.0
+variable        NSTEPS equal 2000
+variable        SEED equal 12345
+timestep        0.001
+thermo          50
+thermo_style    custom step time temp pe ke etotal press vol density
+thermo_modify   flush yes
+dump            pfd_traj all custom 1000 out.lammpstrj id type element x y z fx fy fz
+dump_modify     pfd_traj element Ge Te
+dump_modify     pfd_traj sort id
+velocity        all create ${T} ${SEED} mom yes rot yes dist gaussian
+fix             melt all nvt temp ${T} ${T} 0.1
+run             ${NSTEPS}
+```
+
+Notes for LAMMPS exploration:
+
+- `config.command`: the LAMMPS command prefix (e.g. `lmp -k on g 1 -sf kk` for Kokkos GPU); `-in`, `-log` and `-screen` are added automatically if absent.
+- `config.max_temp`: thermo temperature ceiling (default 5000 K). When the log shows temperatures above it, NaN/inf thermo values, or "Lost atoms", the task is **stopped early in a controlled way** — the partial trajectory plus `md_failed.extxyz`/`md_failed.json` diagnostics are returned normally and feed the exploration-stability convergence check, exactly like the ASE path.
+- The LAMMPS run uses the **frozen+compressed** model produced by the `prep-model` step; make sure the compute environment (`source_list`) provides both `lmp` with the deepmd pair style and `dp` for freezing.
+
 The `select_confs` node filters unphysical configurations and compresses data using entropy-based measures:
 
 ```json

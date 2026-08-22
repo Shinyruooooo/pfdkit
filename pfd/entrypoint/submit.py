@@ -9,6 +9,7 @@ import dpdata
 import dflow
 import pfd
 import re
+import logging
 import ase
 import warnings
 import time
@@ -67,8 +68,10 @@ from pfd.op import (
     CalyEvoStep,
     CalyEvoStepMerge,
 )
+from pfd.op.run_lmp import RunLmp
+from pfd.op.prep_model import PrepModelFreeze
 from pfd.exploration.task import (
-    AseTaskGroup, CalyTaskGroup
+    AseTaskGroup, CalyTaskGroup, LmpTemplateTaskGroup
 )
 
 
@@ -78,6 +81,14 @@ explore_styles = {
         "prep": PrepASE,
         "run": RunASE,
         "task_grp": AseTaskGroup,
+    },
+    "lmp":{
+        "preprun": PrepRunExpl,
+        # PrepASE only materializes task files and is content-agnostic;
+        # it is reused for LAMMPS tasks (conf.lmp + in.lammps)
+        "prep": PrepASE,
+        "run": RunLmp,
+        "task_grp": LmpTemplateTaskGroup,
     },
     "calypso":{
         "preprun": PrepRunCaly,
@@ -155,7 +166,7 @@ def make_pfd_op(
             f"Training style {train_style} has not been implemented!"
         )
 
-    if explore_style == "ase":
+    if explore_style in ["ase", "lmp"]:
         prep_run_explore_op = explore_styles[explore_style]["preprun"](
             "prep-run-explore-step",
             explore_styles[explore_style]["prep"],
@@ -209,11 +220,19 @@ def make_pfd_op(
         upload_python_packages=upload_python_packages,
     )
     
+    # LAMMPS exploration runs on a frozen+compressed .pt2 model: freeze
+    # the freshly trained checkpoint between iterations. ASE uses the
+    # checkpoint directly and does not need this step. The training step
+    # config (GPU + deepmd env) fits freeze/compress as well (~2 GB peak).
+    prep_model_config = deepcopy(train_config) if explore_style == "lmp" else None
+
     expl_train_loop_op = ExplTrainLoop(
         name="loop",
         expl_train_blk_op=expl_train_block_op,
         stage_scheduler_op=wf_styles[wf_style], ## implement a default scheduler
         scheduler_config=scheduler_config,
+        prep_model_op=PrepModelFreeze if explore_style == "lmp" else None,
+        prep_model_config=prep_model_config,
         upload_python_packages=upload_python_packages,
     )
 
@@ -355,10 +374,36 @@ class FlowGen:
         expl_stages = config["exploration"]["stages"]
         explore_config = config["exploration"]["config"]
 
+        #### LAMMPS exploration: read user-written templates and inject
+        #### the type_map (from the template pair_coeff) into the run config
+        if explore_style == "lmp":
+            from pfd.exploration.task.lmp_template_task_group import (
+                parse_pair_coeff_elements,
+            )
+
+            for stg in expl_stages:
+                for task_grp in stg:
+                    tmpl_path = task_grp.get("input_lmp_template")
+                    if tmpl_path is None:
+                        raise ValueError(
+                            "each lmp exploration task group requires "
+                            "'input_lmp_template' (path to a LAMMPS input script)"
+                        )
+                    with open(tmpl_path) as fp:
+                        task_grp["input_lmp_template"] = fp.read()
+            if not explore_config.get("type_map"):
+                elements = parse_pair_coeff_elements(
+                    expl_stages[0][0]["input_lmp_template"].split("\n")
+                )
+                if elements:
+                    explore_config["type_map"] = elements
+
         #### confs selection config
         select_confs_config = config["select_confs"]
         conf_filters = get_conf_filters(select_confs_config.pop("frame_filter"))
-        render = TrajRender.get_driver(explore_style)()
+        render = TrajRender.get_driver(explore_style)(
+            **({"type_map": explore_config["type_map"]} if explore_style == "lmp" and explore_config.get("type_map") else {})
+        )
         conf_selector = ConfSelectorFrames(
             render,  conf_filters=conf_filters
         )
