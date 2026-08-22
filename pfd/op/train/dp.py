@@ -61,9 +61,13 @@ class DPTrain(Train):
             )
         dp_command = config.get("command", "dp").split()
         impl = config.get("impl", "tensorflow")
-        assert impl in ["tensorflow", "pytorch"]
+        assert impl in ["tensorflow", "pytorch", "pytorch_expt"]
         if impl == "pytorch":
             dp_command.append("--pt")
+        elif impl == "pytorch_expt":
+            # pt_expt (PyTorch Exportable) backend; required for dpa4c and
+            # other exportable-only descriptors
+            dp_command.append("--pt-expt")
         finetune_args = config.get("finetune_args", "")
         train_args = config.get("train_args", "")
         config = DPTrain.normalize_config(config)
@@ -174,7 +178,7 @@ class DPTrain(Train):
             shutil.copy2("input_v2_compat.json", train_script_name)
 
         # freeze model
-        if impl == "pytorch":
+        if impl in ("pytorch", "pytorch_expt"):
             self.model_file = "model.ckpt.pt"
         else:
             ret, out, err = run_command(["dp", "freeze", "-o", "frozen_model.pb"])
@@ -284,7 +288,7 @@ class DPTrain(Train):
         # find checkpoint
         if impl == "tensorflow" and os.path.isfile("checkpoint"):
             checkpoint = "model.ckpt"
-        elif impl == "pytorch" and len(glob.glob("model.ckpt-[0-9]*.pt")) > 0:
+        elif impl in ("pytorch", "pytorch_expt") and len(glob.glob("model.ckpt-[0-9]*.pt")) > 0:
             checkpoint = "model.ckpt-%s.pt" % max(
                 [int(f[11:-3]) for f in glob.glob("model.ckpt-[0-9]*.pt")]
             )
@@ -327,7 +331,7 @@ class DPTrain(Train):
     @staticmethod
     def training_args():
         doc_command = "The command for DP, 'dp' for default"
-        doc_impl = "The implementation/backend of DP. It can be 'tensorflow' or 'pytorch'. 'tensorflow' for default."
+        doc_impl = "The implementation/backend of DP. It can be 'tensorflow', 'pytorch' or 'pytorch_expt' (PyTorch Exportable, required for dpa4c and other exportable-only descriptors). 'tensorflow' for default."
         doc_finetune_args = "Extra arguments for finetuning"
         doc_multitask = "Do multitask training"
         doc_head = "Head to use in the multitask training"
