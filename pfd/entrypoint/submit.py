@@ -676,6 +676,9 @@ def get_resubmit_keys(wf, unsuccessful_step_keys: bool = False):
         "run-fp",
         "collect-data",
         "evaluate",
+        # freeze/compress is deterministic given the input model; reuse it
+        # on resubmit so the (several-minute) freeze is not redone
+        "prep-model",
         # "scheduler",
     ]
 
