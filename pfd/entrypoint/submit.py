@@ -388,20 +388,31 @@ class FlowGen:
                     if tmpl_path is not None:
                         with open(tmpl_path) as fp:
                             task_grp["input_lmp_template"] = fp.read()
-            # inject type_map into the run config; in template mode it comes
-            # from the template pair_coeff line
+            # inject type_map into the run config. In template mode it comes
+            # from the template pair_coeff line; in parameterized mode it comes
+            # from the stage's type_map or, failing that, from the elements of
+            # the sampled configurations.
             if not explore_config.get("type_map"):
+                elements = []
                 for stg in expl_stages:
                     for task_grp in stg:
                         if task_grp.get("input_lmp_template"):
                             elements = parse_pair_coeff_elements(
                                 task_grp["input_lmp_template"].split("\n")
                             )
-                            if elements:
-                                explore_config["type_map"] = elements
-                                break
-                    if explore_config.get("type_map"):
+                        elif task_grp.get("type_map"):
+                            elements = task_grp["type_map"]
+                        if elements:
+                            break
+                    if elements:
                         break
+                if not elements:
+                    # fall back to the elements of the init confs
+                    from ase.io import read as _ase_read
+                    atoms0 = _ase_read(init_confs[0], index=0)
+                    elements = sorted(set(atoms0.get_chemical_symbols()))
+                if elements:
+                    explore_config["type_map"] = elements
 
         #### confs selection config
         select_confs_config = config["select_confs"]
