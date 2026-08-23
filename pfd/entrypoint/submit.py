@@ -374,6 +374,14 @@ class FlowGen:
         expl_stages = config["exploration"]["stages"]
         explore_config = config["exploration"]["config"]
 
+        #### read init confs (needed early for LAMMPS type_map inference)
+        if config["inputs"]["init_confs"]["confs_paths"] is not None:
+            init_confs_prefix = config["inputs"]["init_confs"]["prefix"]
+            init_confs = config["inputs"]["init_confs"]["confs_paths"]
+            init_confs = get_systems_from_data(init_confs, init_confs_prefix)
+        else:
+            raise RuntimeError("init_confs must be provided")
+
         #### LAMMPS exploration: two modes per task group:
         #### - template mode: has 'input_lmp_template' (user-written script)
         #### - parameterized mode: ASE-style keys (ens/temps/press/...)
@@ -430,14 +438,6 @@ class FlowGen:
         ##### collect_data_config 
         collect_data_config = {"test_size": evaluate_config.pop('test_size',0.1)}
 
-        #### read init confs
-        if config["inputs"]["init_confs"]["confs_paths"] is not None:
-            init_confs_prefix = config["inputs"]["init_confs"]["prefix"]
-            init_confs = config["inputs"]["init_confs"]["confs_paths"]
-            init_confs = get_systems_from_data(init_confs, init_confs_prefix)
-        else:
-            raise RuntimeError("init_confs must be provided")
-        
         #### read init fp confs
         if config["inputs"]["init_fp_confs"]["confs_paths"] is not None:
             init_fp_confs_prefix = config["inputs"]["init_fp_confs"]["prefix"]
